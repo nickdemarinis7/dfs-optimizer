@@ -1,0 +1,22 @@
+{
+  "label": "2026-week-04",
+  "archived_at_utc": "2026-10-02T03:30:22.460228+00:00",
+  "files": [
+    {
+      "name": "DKSalaries.csv",
+      "sha256": "aad10973dca82faf04de11e442e560044d2b54d62ad81bdc4fd04299ed99e42e"
+    },
+    {
+      "name": "DKSalaries (1).csv",
+      "sha256": "a62a90ec2eb935740c6cb8b823c60dcc1ff33ef85802d7f745c34f0f19baa011"
+    },
+    {
+      "name": "FanDuel-NFL-2026 EDT-10 EDT-04 EDT-134747-players-list.csv",
+      "sha256": "7fde3c787956e4353b6aa81c6c39884db1bc8515c68adcef7c27cef9ea2e46c2"
+    },
+    {
+      "name": "FanDuel-NFL-2026 EDT-10 EDT-04 EDT-134921-players-list.csv",
+      "sha256": "5479f4569fc30568af6dc9997a587a22ef8a86b558c28c20d79921ed562587d5"
+    }
+  ]
+}

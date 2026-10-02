@@ -1,0 +1,4 @@
+name,team,passing_yards,passing_touchdowns,interceptions_thrown,rushing_yards,rushing_touchdowns,receptions,receiving_yards,receiving_touchdowns,return_touchdowns,fumbles_lost,two_point_conversions,offensive_fumble_recovery_touchdowns,passing_bonus_probability,rushing_bonus_probability,receiving_bonus_probability
+Jaxon Smith-Njigba,SEA,0,0,0,1.5,0.02,7.2,96.0,0.58,0,0.03,0,0,0,0.01,0.43
+Derrick Henry,BAL,0,0,0,91.0,0.74,1.4,11.0,0.05,0,0.05,0,0,0,0.38,0.01
+

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dfs-optimizer"
+version = "0.1.0"
+description = "NFL lineup optimizer for DraftKings and FanDuel"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["ortools>=9.12,<10", "requests>=2.32,<3", "streamlit>=1.40,<2"]
+
+[project.scripts]
+dfs-optimize = "dfs_optimizer.cli:main"
+dfs-forecast = "dfs_optimizer.historical_cli:main"
+dfs-field-report = "dfs_optimizer.field_report_cli:main"
+dfs-archive-slate = "dfs_optimizer.archive_cli:main"
+dfs-app = "dfs_optimizer.app_cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

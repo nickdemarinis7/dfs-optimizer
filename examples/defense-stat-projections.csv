@@ -1,0 +1,4 @@
+team,sacks,interceptions,fumble_recoveries,return_touchdowns,safeties,blocked_kicks,extra_point_returns,probability_allow_0,probability_allow_1_to_6,probability_allow_7_to_13,probability_allow_14_to_20,probability_allow_21_to_27,probability_allow_28_to_34,probability_allow_35_plus
+LV,2.8,0.8,0.5,0.08,0.05,0.06,0.01,0.02,0.07,0.16,0.27,0.25,0.15,0.08
+SEA,3.1,0.9,0.6,0.10,0.04,0.05,0.01,0.03,0.08,0.18,0.28,0.23,0.13,0.07
+
