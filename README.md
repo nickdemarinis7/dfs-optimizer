@@ -27,6 +27,19 @@ Primary buttons move forward only after each step is complete; technical details
 exposure, and audits stay in optional expanders. Slate, projection, and lineup
 state carry across screens.
 
+## Deploy to Streamlit Community Cloud
+
+The repository is ready for Streamlit Community Cloud. Create an app from this
+GitHub repository using:
+
+- Repository: `nickdemarinis7/dfs-optimizer`
+- Branch: `main`
+- Main file: `src/dfs_optimizer/web_app.py`
+
+`requirements.txt` installs the project and its dependencies. Historical NFL
+data is downloaded into the deployment's ephemeral `data/cache/` directory as
+needed, so a restarted deployment may need to download it again.
+
 The Results screen includes a Sunday preflight gate before downloads unlock. It
 independently checks lineup count, roster size, duplicate players, slate player
 IDs, salary cap, minimum teams, positive projections, selected-player statuses,
