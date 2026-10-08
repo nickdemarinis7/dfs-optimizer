@@ -20,7 +20,17 @@ from dfs_optimizer.optimization import (
 )
 from dfs_optimizer.services.projections import apply_uploaded_ownership
 from dfs_optimizer.services.risk import suggest_max_once_player_ids
-from dfs_optimizer.services.run_archive import build_run_archive, save_run_archive
+try:
+    from dfs_optimizer.services.run_archive import build_run_archive, save_run_archive
+except ImportError:
+    # Streamlit Cloud can retain an already-imported module across a Git pull.
+    # Reload once so a page update and its service module cannot get out of sync.
+    from importlib import reload
+    from dfs_optimizer.services import run_archive as _run_archive
+
+    _run_archive = reload(_run_archive)
+    build_run_archive = _run_archive.build_run_archive
+    save_run_archive = _run_archive.save_run_archive
 
 
 slate = st.session_state.get("slate")

@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from dfs_optimizer.app_ui import apply_platform_theme, hero
-from dfs_optimizer.services import review_contest_results
+from dfs_optimizer.services.results_review import review_contest_results
 
 
 slate = st.session_state.get("slate")

@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from dfs_optimizer.app_ui import apply_platform_theme, hero
-from dfs_optimizer.services import (
+from dfs_optimizer.services.run_history import (
     compare_runs,
     list_run_records,
     mark_run_final,
