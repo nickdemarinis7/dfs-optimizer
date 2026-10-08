@@ -23,6 +23,9 @@ if slate is None or not projections or not lineups:
     st.warning("Generate a portfolio on the Build lineups screen first.", icon=":material/arrow_back:")
     st.stop()
 
+if st.session_state.get("generation_warning"):
+    st.warning(st.session_state["generation_warning"], icon=":material/info:")
+
 diagnostics = analyze_portfolio(lineups, len(projections), len(slate.players))
 report = preflight_lineups(
     slate,

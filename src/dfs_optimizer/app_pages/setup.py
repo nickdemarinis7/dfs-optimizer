@@ -70,6 +70,7 @@ if st.session_state.get("slate") != slate:
         "projections", "projection_key", "projection_built_at", "ownership_hash", "lineups",
         "lineup_config_key", "run_archive", "run_archive_name", "saved_run_path",
         "current_run_id",
+        "generation_warning",
     ):
         st.session_state.pop(key, None)
 st.session_state["slate"] = slate

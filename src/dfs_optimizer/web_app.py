@@ -29,6 +29,7 @@ for key, default in (
     ("run_archive_name", None),
     ("saved_run_path", None),
     ("current_run_id", None),
+    ("generation_warning", None),
 ):
     st.session_state.setdefault(key, default)
 

@@ -12,6 +12,7 @@ from dfs_optimizer.importers import match_projections
 from dfs_optimizer.models import ContestFormat, Position
 from dfs_optimizer.optimization import (
     ClassicOptimizationSettings,
+    LineupOptimizationError,
     SingleGameOptimizationSettings,
     generate_classic_3max_portfolio,
     generate_classic_lineups,
@@ -270,6 +271,7 @@ if st.button(
     type="primary", icon=":material/bolt:", width="stretch",
 ):
     try:
+        generation_warning = None
         matches = match_projections(slate, projections)
         with st.status("Optimizing portfolio…", expanded=True) as status:
             if slate.contest_format == ContestFormat.CLASSIC:
@@ -321,10 +323,27 @@ if st.button(
                     and maximum_player_exposure == .67
                     and maximum_multiplier_exposure == .34 and include_ceiling_lineup
                 )
-                lineups = (
-                    generate_single_game_3max_portfolio(slate, matches, settings)
-                    if use_tuned_3max else
-                    generate_single_game_lineups(
+                if use_tuned_3max:
+                    try:
+                        lineups = generate_single_game_3max_portfolio(
+                            slate, matches, settings
+                        )
+                    except LineupOptimizationError:
+                        lineups = generate_single_game_lineups(
+                            slate, matches, lineup_count,
+                            minimum_unique_players=minimum_unique,
+                            maximum_player_exposure=maximum_player_exposure,
+                            maximum_multiplier_exposure=maximum_multiplier_exposure,
+                            settings=settings,
+                            lineup_ceiling_weights=(.3, .3, .7),
+                        )
+                        generation_warning = (
+                            "The extra-strict joint Showdown selector could not form a portfolio. "
+                            "These lineups preserve your exposure, uniqueness, player-pool, and "
+                            "Captain/MVP limits, but were generated sequentially instead."
+                        )
+                else:
+                    lineups = generate_single_game_lineups(
                         slate, matches, lineup_count, minimum_unique_players=minimum_unique,
                         maximum_player_exposure=maximum_player_exposure,
                         maximum_multiplier_exposure=maximum_multiplier_exposure,
@@ -334,7 +353,6 @@ if st.button(
                             if include_ceiling_lineup else None
                         ),
                     )
-                )
             if len(lineups) != lineup_count:
                 raise RuntimeError(
                     f"Only {len(lineups)} of {lineup_count} requested lineups could satisfy these settings. "
@@ -384,6 +402,7 @@ if st.button(
         st.session_state["run_archive_name"] = archive_name
         st.session_state["saved_run_path"] = str(saved_run_path) if saved_run_path else None
         st.session_state["current_run_id"] = run_id
+        st.session_state["generation_warning"] = generation_warning
         st.switch_page("app_pages/results.py")
     except (ValueError, RuntimeError) as exc:
         st.error(f"Could not generate lineups: {exc}")
