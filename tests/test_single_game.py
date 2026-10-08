@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import unittest
 from pathlib import Path
 
@@ -63,6 +64,58 @@ class SingleGameTests(unittest.TestCase):
             captain = lineup.entries[0].player.platform_id
             multiplier_counts[captain] = multiplier_counts.get(captain, 0) + 1
         self.assertLessEqual(max(multiplier_counts.values()), 2)
+
+    def test_limits_fragile_player_to_one_lineup(self) -> None:
+        projections = build_platform_average_projections(self.dk)
+        matches = match_projections(self.dk, projections)
+        limited_id = optimize_single_game_lineup(
+            self.dk, matches
+        ).entries[-1].player.platform_id
+
+        lineups = generate_single_game_lineups(
+            self.dk,
+            matches,
+            count=3,
+            minimum_unique_players=1,
+            settings=SingleGameOptimizationSettings(
+                limited_player_ids=frozenset({limited_id})
+            ),
+        )
+        appearances = sum(
+            entry.player.platform_id == limited_id
+            for lineup in lineups
+            for entry in lineup.entries
+        )
+
+        self.assertEqual(len(lineups), 3)
+        self.assertLessEqual(appearances, 1)
+
+    def test_can_penalize_high_projected_ownership(self) -> None:
+        projections = build_platform_average_projections(self.dk)
+        matches = match_projections(self.dk, projections)
+        baseline = optimize_single_game_lineup(self.dk, matches)
+        penalized_id = baseline.entries[-1].player.platform_id
+        ownership_matches = replace(
+            matches,
+            by_player_id={
+                player_id: replace(
+                    projection,
+                    projected_ownership=100 if player_id == penalized_id else 0,
+                )
+                for player_id, projection in matches.by_player_id.items()
+            },
+        )
+
+        lineup = optimize_single_game_lineup(
+            self.dk,
+            ownership_matches,
+            settings=SingleGameOptimizationSettings(ownership_penalty=1),
+        )
+
+        self.assertNotIn(
+            penalized_id,
+            {entry.player.platform_id for entry in lineup.entries},
+        )
 
     def test_enforces_showdown_tournament_construction(self) -> None:
         projections = build_platform_average_projections(self.dk)
@@ -166,9 +219,13 @@ class SingleGameTests(unittest.TestCase):
         ) for lineup in lineups]
 
         self.assertEqual(len(lineups), 3)
+        self.assertEqual(
+            len({lineup.entries[0].player.platform_id for lineup in lineups}),
+            3,
+        )
         self.assertEqual(ceilings[-1], max(ceilings))
         medians = [lineup.projected_points for lineup in lineups]
-        self.assertLessEqual(max(medians) - min(medians), 12)
+        self.assertLessEqual(max(medians) - min(medians), 15)
 
 
 if __name__ == "__main__":

@@ -101,7 +101,9 @@ class ClassicOptimizerTests(unittest.TestCase):
         lineups = generate_classic_3max_portfolio(
             slate,
             matches,
-            ClassicOptimizationSettings(),
+            ClassicOptimizationSettings(
+                limited_player_ids=frozenset({"wr1"})
+            ),
             candidate_count=8,
         )
         appearances = Counter(
@@ -113,6 +115,16 @@ class ClassicOptimizerTests(unittest.TestCase):
 
         self.assertEqual(len(lineups), 3)
         self.assertLessEqual(max(appearances.values()), 2)
+        self.assertLessEqual(appearances["wr1"], 1)
+        self.assertEqual(
+            len({
+                entry.player.platform_id
+                for lineup in lineups
+                for entry in lineup.entries
+                if entry.player.primary_position == Position.DST
+            }),
+            3,
+        )
         for left_index, left in enumerate(player_sets):
             for right in player_sets[left_index + 1:]:
                 self.assertGreaterEqual(len(left - right), 3)
@@ -221,6 +233,27 @@ class ClassicOptimizerTests(unittest.TestCase):
         self.assertTrue(appearances)
         self.assertEqual(len(lineups), 4)
         self.assertLessEqual(max(appearances.values()), 3)
+
+    def test_limits_fragile_player_to_one_lineup(self) -> None:
+        slate, matches = make_slate(Platform.DRAFTKINGS)
+        first_lineup = optimize_classic_lineup(slate, matches)
+        limited_id = first_lineup.entries[0].player.platform_id
+
+        lineups = generate_classic_lineups(
+            slate,
+            matches,
+            count=3,
+            minimum_unique_players=1,
+            settings=ClassicOptimizationSettings(
+                limited_player_ids=frozenset({limited_id})
+            ),
+        )
+        appearances = Counter(
+            entry.player.platform_id for lineup in lineups for entry in lineup.entries
+        )
+
+        self.assertEqual(len(lineups), 3)
+        self.assertLessEqual(appearances[limited_id], 1)
 
     def test_fractional_exposure_never_exceeds_requested_maximum(self) -> None:
         slate, matches = make_slate(Platform.DRAFTKINGS)

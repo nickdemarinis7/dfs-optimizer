@@ -1,4 +1,5 @@
 data/cache/
+data/runs/
 __pycache__/
 *.py[cod]
 .pytest_cache/

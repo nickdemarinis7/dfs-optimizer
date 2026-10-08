@@ -27,6 +27,7 @@ page_kicker(1, "Set up")
 hero("Build your Sunday.", "Drop in a salary file. Lineup Studio handles the contest, slate, and projection setup.")
 slate = None
 source_name = None
+salary_content = None
 upload = st.file_uploader(
     "DraftKings or FanDuel salary CSV",
     type="csv",
@@ -34,7 +35,8 @@ upload = st.file_uploader(
 )
 if upload:
     try:
-        slate = load_uploaded_salary_file(upload.name, upload.getvalue())
+        salary_content = upload.getvalue()
+        slate = load_uploaded_salary_file(upload.name, salary_content)
         source_name = upload.name
     except (OSError, ValueError) as exc:
         st.error(str(exc))
@@ -52,8 +54,11 @@ with st.container(horizontal=True):
             if selected is not None and upload is None:
                 path, slate = discovered[selected]
                 source_name = path.name
+                salary_content = path.read_bytes()
         else:
             st.caption("No recognized salary CSV files found in this folder.")
+    if st.button("Run history", icon=":material/history_toggle_off:"):
+        st.switch_page("app_pages/run_history.py")
 
 if slate is None:
     st.stop()
@@ -63,11 +68,13 @@ apply_platform_theme(slate.platform)
 if st.session_state.get("slate") != slate:
     for key in (
         "projections", "projection_key", "projection_built_at", "ownership_hash", "lineups",
-        "lineup_config_key",
+        "lineup_config_key", "run_archive", "run_archive_name", "saved_run_path",
+        "current_run_id",
     ):
         st.session_state.pop(key, None)
 st.session_state["slate"] = slate
 st.session_state["source_name"] = source_name
+st.session_state["salary_content"] = salary_content
 
 summary_strip(
     source_name,

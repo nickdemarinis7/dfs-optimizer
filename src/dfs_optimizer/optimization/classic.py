@@ -18,6 +18,7 @@ class LineupOptimizationError(ValueError):
 class ClassicOptimizationSettings:
     locked_player_ids: frozenset[str] = frozenset()
     excluded_player_ids: frozenset[str] = frozenset()
+    limited_player_ids: frozenset[str] = frozenset()
     qb_stack_size: int = 0
     require_opponent_bring_back: bool = False
     avoid_dst_opponents: bool = True
@@ -32,6 +33,8 @@ class ClassicOptimizationSettings:
     def __post_init__(self) -> None:
         if self.locked_player_ids & self.excluded_player_ids:
             raise ValueError("a player cannot be both locked and excluded")
+        if self.locked_player_ids & self.limited_player_ids:
+            raise ValueError("a locked player cannot be limited to one lineup")
         if self.qb_stack_size not in (0, 1, 2):
             raise ValueError("qb_stack_size must be 0, 1, or 2")
         if not 0 <= self.ceiling_weight <= 1:
@@ -126,6 +129,10 @@ def generate_classic_lineups(
                     positions_by_id.get(player_id) == Position.DST
                     and appearances_so_far >= maximum_dst_appearances
                 )
+                or (
+                    player_id in base_settings.limited_player_ids
+                    and appearances_so_far >= 1
+                )
             )
             and player_id not in base_settings.locked_player_ids
         }
@@ -169,6 +176,7 @@ def generate_classic_3max_portfolio(
     settings: ClassicOptimizationSettings,
     minimum_unique_players: int = 3,
     maximum_player_appearances: int = 2,
+    maximum_dst_appearances: int = 1,
     candidate_count: int = 20,
 ) -> tuple[OptimizedLineup, ...]:
     """Select two balanced lineups and one ceiling lineup as a single portfolio."""
@@ -185,7 +193,7 @@ def generate_classic_3max_portfolio(
             candidate_count,
             minimum_unique_players=1,
             rules=rules,
-            settings=candidate_settings,
+            settings=replace(candidate_settings, limited_player_ids=frozenset()),
             maximum_player_exposure=0.50,
             maximum_qb_exposure=0.50,
             maximum_dst_exposure=0.50,
@@ -214,9 +222,15 @@ def generate_classic_3max_portfolio(
 
     all_player_ids = set().union(*player_sets)
     for player_id in all_player_ids - settings.locked_player_ids:
+        player = next(item for item in slate.players if item.platform_id == player_id)
+        appearance_limit = (
+            1 if player_id in settings.limited_player_ids
+            else maximum_dst_appearances if player.primary_position == Position.DST
+            else maximum_player_appearances
+        )
         model.add(
             sum(selected[index] for index, ids in enumerate(player_sets) if player_id in ids)
-            <= maximum_player_appearances
+            <= appearance_limit
         )
 
     pair_penalties = []

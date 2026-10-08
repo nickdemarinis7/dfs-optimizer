@@ -24,6 +24,11 @@ for key, default in (
     ("current_config_key", None),
     ("lineup_settings", {}),
     ("projection_built_at", None),
+    ("salary_content", None),
+    ("run_archive", None),
+    ("run_archive_name", None),
+    ("saved_run_path", None),
+    ("current_run_id", None),
 ):
     st.session_state.setdefault(key, default)
 
@@ -37,6 +42,8 @@ page = st.navigation(
         ),
         st.Page("app_pages/build.py", title="Build lineups", icon=":material/tune:"),
         st.Page("app_pages/results.py", title="Results", icon=":material/analytics:"),
+        st.Page("app_pages/backtest.py", title="Backtest", icon=":material/history:"),
+        st.Page("app_pages/run_history.py", title="Run history", icon=":material/history_toggle_off:"),
     ],
     position="hidden",
 )

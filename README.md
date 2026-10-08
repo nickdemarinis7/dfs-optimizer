@@ -20,12 +20,20 @@ an import folder. The default `samples/` folder acts as a simple inbox: place
 new DraftKings or FanDuel CSVs there, refresh the app, and choose a detected
 slate. Unrelated CSVs, such as contest history and results, are ignored.
 
-The interface is a mobile-first three-step wizard. **Slate & projections** loads
+The interface is a mobile-first flow. **Slate & projections** loads
 the salary file and forecast, **Build lineups** handles player decisions and the
-3-max strategy, and **Results** reviews one lineup at a time before download.
+3-max strategy, **Results** reviews one lineup at a time before download, and
+**Backtest** matches those lineups to final contest standings.
 Primary buttons move forward only after each step is complete; technical details,
 exposure, and audits stay in optional expanders. Slate, projection, and lineup
 state carry across screens.
+
+Each generation is an immutable, timestamped run. Give important snapshots a
+label such as `Wednesday baseline` or `Sunday final`, then use **Run history** to
+download or reopen an earlier portfolio, compare projection movement and lineup
+overlap, and mark the snapshot that was actually submitted. Marking a newer run
+as submitted replaces the final marker only for that slate; it does not delete
+or modify the earlier archive.
 
 ## Deploy to Streamlit Community Cloud
 
@@ -40,12 +48,10 @@ GitHub repository using:
 data is downloaded into the deployment's ephemeral `data/cache/` directory as
 needed, so a restarted deployment may need to download it again.
 
-The Results screen includes a Sunday preflight gate before downloads unlock. It
+The Results screen includes a pre-submit audit before downloads unlock. It
 independently checks lineup count, roster size, duplicate players, slate player
 IDs, salary cap, minimum teams, positive projections, selected-player statuses,
-and projection age. Because the app does not have a dependable live injury feed,
-it also requires explicit confirmation that current injury/inactive news and the
-intended platform, contest, and slate were reviewed.
+and projection age.
 
 The default projection source is the pregame historical forecast. Select the
 target season and week, then build the forecast; the app can download the
@@ -67,8 +73,9 @@ API. Automating a logged-in browser or private endpoint would be brittle and
 could conflict with platform terms, so this project does not store credentials
 or scrape those endpoints.
 
-Contest-results CSVs should also be downloaded while they are available and
-archived with the matching pre-lock salaries and projections for backtesting.
+Contest-results CSVs should also be downloaded while they are available. The
+Backtest screen accepts a final DraftKings or FanDuel standings CSV/ZIP and
+reports each matched lineup's score, rank, top-field percentage, and duplication.
 
 ## Projection CSV format
 
@@ -163,7 +170,8 @@ template; the exporter does not invent that metadata.
 
 For DraftKings and FanDuel Classic, the web app includes a **3-max tournament**
 preset. It generates three lineups with three-player uniqueness, allows strong
-non-QB cores, limits each unlocked player to two lineups, requires both the
+non-QB cores, limits each unlocked player to two lineups, uses three different
+defenses by default, and requires both the
 QB stack partner and opponent bring-back to project for at least seven points,
 prevents the same QB/pass-catcher/bring-back trio from repeating, and enables
 an opponent bring-back. Custom portfolios set exposure as
@@ -189,6 +197,12 @@ percentage point to introduce a modest leverage preference. The preset enables
 that penalty only when ownership covers at least 75% of projected players, so
 missing rows are not silently treated as trustworthy zero-ownership plays.
 
+The player-moves panel also has a **Max once** risk tier. Historical forecasts
+automatically suggest players whose empirical floor is near zero despite a
+usable median projection; users can add or remove players before optimizing.
+These fragile values may appear in only one portfolio lineup, preventing one
+uncertain role from becoming a multi-site core.
+
 Historical forecasts apply a conservative role gate: when at least two
 current-season team games are available, a player with fewer than two recent
 opportunities per game and a platform fantasy average of two points or less is
@@ -210,9 +224,11 @@ oversized cores, excessive pairwise overlap, and stack ceiling requirements. An
 
 An optional official contest-entry template can be uploaded after lineup
 generation. The app fills the Classic roster columns while preserving entry
-IDs and contest metadata. A downloadable run archive contains `manifest.json`,
-the complete projection snapshot, and generated lineups for reproducibility
-and later backtesting.
+IDs and contest metadata. Every generation also creates a complete run package
+containing `manifest.json`, the original salary CSV, the projection snapshot,
+and generated lineups. Local runs are automatically backed up under `data/runs/`;
+hosted deployments expose the same package as a download because their filesystems
+may be temporary.
 
 ## Single-game contests
 
@@ -221,8 +237,9 @@ Game. Both use one 1.5x-points/1.5x-salary multiplier slot and five FLEX slots.
 DraftKings paired CPT/FLEX rows are collapsed into one logical player so the
 same athlete cannot occupy both roles.
 
-The web app includes a Showdown 3-max tournament preset. It caps general and
-Captain/MVP exposure at two of three lineups, requires at least two unique
+The web app includes a Showdown 3-max tournament preset. It caps general
+exposure at two of three lineups, requires three distinct Captain/MVP players,
+requires at least two unique
 players and one quarterback per lineup, limits a lineup to four players from
 one team, and restricts the multiplier slot to QB, RB, WR, or TE players with
 at least a 20-point multiplied historical ceiling. Two lineups use a balanced
@@ -235,7 +252,9 @@ from consideration and only quarterbacks projecting at least five points can
 satisfy its quarterback requirement.
 WR and TE multiplier selections must include their quarterback, defenses may
 face at most one opposing offensive player, and the joint portfolio limits the
-median projection spread between any two lineups to 12 points.
+median projection spread between any two lineups to 15 points so distinct game
+scripts remain feasible. When ownership coverage reaches 75%, the same modest
+leverage penalty used for Classic also discourages overly chalky combinations.
 
 Historical single-game forecasts include kickers using made field goals by
 distance and extra points. Portfolio generation supports overall exposure,

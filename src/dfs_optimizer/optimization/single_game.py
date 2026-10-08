@@ -46,7 +46,9 @@ class SingleGameOptimizationSettings:
     maximum_dst_opponents: int | None = None
     require_multiplier_receiver_qb: bool = False
     ceiling_weight: float = 0.0
+    ownership_penalty: float = 0.0
     excluded_player_ids: frozenset[str] = frozenset()
+    limited_player_ids: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if self.minimum_multiplier_ceiling < 0:
@@ -63,6 +65,8 @@ class SingleGameOptimizationSettings:
             raise ValueError("maximum_dst_opponents cannot be negative")
         if not 0 <= self.ceiling_weight <= 1:
             raise ValueError("ceiling_weight must be between 0 and 1")
+        if self.ownership_penalty < 0:
+            raise ValueError("ownership_penalty cannot be negative")
 
 
 def optimize_single_game_lineup(slate: Slate, projection_matches: ProjectionMatchResult, rules: SingleGameRules | None = None, settings: SingleGameOptimizationSettings | None = None) -> OptimizedSingleGameLineup:
@@ -96,7 +100,11 @@ def generate_single_game_lineups(
     multiplier_counts: dict[str, int] = {}
     lineups = []
     for lineup_index in range(count):
-        excluded = frozenset(key for key, value in player_counts.items() if value >= max_player)
+        excluded = frozenset(
+            key for key, value in player_counts.items()
+            if value >= max_player
+            or (key in base_settings.limited_player_ids and value >= 1)
+        )
         multiplier_excluded = frozenset(key for key, value in multiplier_counts.items() if value >= max_multiplier)
         previous = tuple(frozenset(entry.player.platform_id for entry in lineup.entries) for lineup in lineups)
         try:
@@ -126,7 +134,7 @@ def generate_single_game_3max_portfolio(
     settings: SingleGameOptimizationSettings,
     minimum_unique_players: int = 2,
     candidate_count: int = 24,
-    maximum_median_spread: float = 12.0,
+    maximum_median_spread: float = 15.0,
 ) -> tuple[OptimizedSingleGameLineup, ...]:
     """Select two balanced builds and one highest-ceiling build jointly."""
     balanced_settings = replace(settings, ceiling_weight=0.30)
@@ -139,8 +147,8 @@ def generate_single_game_3max_portfolio(
             candidate_count,
             minimum_unique_players=1,
             maximum_player_exposure=0.50,
-            maximum_multiplier_exposure=0.50,
-            settings=candidate_settings,
+            maximum_multiplier_exposure=0.34,
+            settings=replace(candidate_settings, limited_player_ids=frozenset()),
         ):
             key = (
                 lineup.entries[0].player.platform_id,
@@ -173,13 +181,14 @@ def generate_single_game_3max_portfolio(
     model.add(sum(ceiling) == 1)
 
     for player_id in set().union(*player_sets):
+        appearance_limit = 1 if player_id in settings.limited_player_ids else 2
         model.add(sum(
             selected[i] for i, ids in enumerate(player_sets) if player_id in ids
-        ) <= 2)
+        ) <= appearance_limit)
     for captain_id in set(captain_ids):
         model.add(sum(
             selected[i] for i, value in enumerate(captain_ids) if value == captain_id
-        ) <= 2)
+        ) <= 1)
 
     pair_penalties = []
     lineup_size = len(candidates[0].entries)
@@ -211,9 +220,11 @@ def generate_single_game_3max_portfolio(
         for entry in lineup.entries:
             projection = entry.projection
             upper = projection.ceiling or projection.projected_points
+            ownership = projection.projected_ownership or 0
             total += (
                 projection.projected_points * (1 - role_settings.ceiling_weight)
                 + upper * role_settings.ceiling_weight
+                - ownership * role_settings.ownership_penalty
             ) * entry.point_multiplier
         return total
 
@@ -332,9 +343,11 @@ def _optimize_single_game_lineup(slate: Slate, projection_matches: ProjectionMat
     def objective_points(player: Player) -> float:
         projection = projection_matches.by_player_id[player.platform_id]
         ceiling = projection.ceiling if projection.ceiling is not None else projection.projected_points
+        ownership = projection.projected_ownership or 0
         return (
             projection.projected_points * (1 - settings.ceiling_weight)
             + ceiling * settings.ceiling_weight
+            - ownership * settings.ownership_penalty
         )
     model.maximize(sum(round(objective_points(p) * rules.multiplier * scale) * multiplier[i] + round(objective_points(p) * scale) * flex[i] for i, p in enumerate(players)))
     solver = cp_model.CpSolver()

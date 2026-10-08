@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timezone
+from uuid import uuid4
 
 import pandas as pd
 import streamlit as st
@@ -17,6 +19,8 @@ from dfs_optimizer.optimization import (
     generate_single_game_lineups,
 )
 from dfs_optimizer.services.projections import apply_uploaded_ownership
+from dfs_optimizer.services.risk import suggest_max_once_player_ids
+from dfs_optimizer.services.run_archive import build_run_archive, save_run_archive
 
 
 slate = st.session_state.get("slate")
@@ -53,13 +57,19 @@ with st.popover("Lineup settings", icon=":material/tune:", width="stretch"):
         "Make the final lineup ceiling-focused", value=True,
         key=f"build-ceiling-lineup-{slate.contest_format.value}",
     )
+    run_label = st.text_input(
+        "Run label (optional)",
+        placeholder="Wednesday baseline or Sunday final",
+        key=f"build-run-label-{slate.platform.value}-{slate.contest_format.value}",
+        help="Makes this generation easy to find and compare later.",
+    )
     if slate.contest_format == ContestFormat.CLASSIC:
         maximum_qb_exposure = int(st.number_input(
             "Maximum QB exposure (%)", min_value=5, max_value=100, value=67, step=5,
             key="build-qb-exposure",
         )) / 100
         maximum_dst_exposure = int(st.number_input(
-            "Maximum defense exposure (%)", min_value=5, max_value=100, value=67, step=5,
+            "Maximum defense exposure (%)", min_value=5, max_value=100, value=34, step=5,
             key="build-dst-exposure",
         )) / 100
         require_qb_stack = st.toggle("Require a QB stack", value=True, key="build-qb-stack")
@@ -69,7 +79,7 @@ with st.popover("Lineup settings", icon=":material/tune:", width="stretch"):
         )
     else:
         maximum_multiplier_exposure = int(st.number_input(
-            "Maximum MVP/Captain exposure (%)", min_value=5, max_value=100, value=67, step=5,
+            "Maximum MVP/Captain exposure (%)", min_value=5, max_value=100, value=34, step=5,
             key="build-multiplier-exposure",
         )) / 100
 
@@ -80,6 +90,7 @@ summary_strip(
 )
 
 players = {p.platform_id: p for p in slate.players if p.platform_id in projection_by_id}
+suggested_max_once = suggest_max_once_player_ids(slate, tuple(projections)) & players.keys()
 label = lambda pid: f"{players[pid].name} — {players[pid].team} {players[pid].primary_position.value}"
 locked = []
 with st.container(horizontal=True, wrap=True):
@@ -90,6 +101,17 @@ with st.container(horizontal=True, wrap=True):
             "Exclude", tuple(pid for pid in players if pid not in locked), format_func=label,
             key=f"build-exclusions-{hash(slate)}",
             help="Remove inactive players, backups, or anyone you do not want.",
+        )
+        max_once = st.multiselect(
+            "Max once",
+            tuple(pid for pid in players if pid not in locked and pid not in excluded),
+            default=tuple(
+                pid for pid in suggested_max_once
+                if pid not in locked and pid not in excluded
+            ),
+            format_func=label,
+            key=f"build-max-once-{hash(slate)}",
+            help="Fragile values can appear in at most one lineup. Low-floor suggestions are selected automatically.",
         )
     with st.popover("Ownership", icon=":material/add_chart:"):
         ownership = st.file_uploader("Projected ownership CSV", type="csv")
@@ -107,6 +129,11 @@ with st.container(horizontal=True, wrap=True):
                 except (OSError, ValueError) as exc:
                     st.error(f"Could not apply ownership projections: {exc}")
 locked_ids, excluded_ids = frozenset(locked), frozenset(excluded)
+limited_ids = frozenset(max_once) - locked_ids - excluded_ids
+ownership_coverage = (
+    sum(item.projected_ownership is not None for item in projections) / len(projections)
+    if projections else 0
+)
 
 st.subheader("Player pool")
 status_view = st.segmented_control(
@@ -168,6 +195,8 @@ for player in players.values():
         news.append(("Status", player.name, player.team, player.status))
     if projection.projected_points < 2:
         news.append(("Low projection", player.name, player.team, f"{projection.projected_points:.2f} points"))
+    if player.platform_id in limited_ids:
+        news.append(("Max once", player.name, player.team, "Limited to one portfolio lineup"))
 qbs = {}
 for player in players.values():
     if player.primary_position == Position.QB and projection_by_id[player.platform_id].projected_points >= 5 and player.platform_id not in excluded_ids:
@@ -206,11 +235,15 @@ elif slate.contest_format == ContestFormat.SINGLE_GAME:
     strategy_parts.append(f"{maximum_multiplier_exposure:.0%} MVP/Captain cap")
 if include_ceiling_lineup:
     strategy_parts.append("final ceiling lineup")
+if limited_ids:
+    strategy_parts.append(f"{len(limited_ids)} max-once players")
+if ownership_coverage >= .75:
+    strategy_parts.append("ownership leverage")
 st.caption(" · ".join(strategy_parts))
 
 config_key = (
     st.session_state.get("projection_key"), st.session_state.get("ownership_hash"),
-    hash(slate), tuple(sorted(locked_ids)), tuple(sorted(excluded_ids)),
+    hash(slate), tuple(sorted(locked_ids)), tuple(sorted(excluded_ids)), tuple(sorted(limited_ids)),
     lineup_count, minimum_unique, maximum_player_exposure, include_ceiling_lineup,
     maximum_qb_exposure if slate.contest_format == ContestFormat.CLASSIC else None,
     maximum_dst_exposure if slate.contest_format == ContestFormat.CLASSIC else None,
@@ -232,6 +265,7 @@ if st.button(
             if slate.contest_format == ContestFormat.CLASSIC:
                 settings = ClassicOptimizationSettings(
                     locked_player_ids=locked_ids, excluded_player_ids=excluded_ids,
+                    limited_player_ids=limited_ids,
                     qb_stack_size=1 if require_qb_stack else 0,
                     require_opponent_bring_back=require_qb_stack and require_bring_back,
                     ceiling_weight=.3, minimum_stack_projection=7 if require_qb_stack else 0,
@@ -239,11 +273,12 @@ if st.button(
                     minimum_stack_ceiling=12 if require_qb_stack else 0,
                     minimum_bring_back_ceiling=12 if require_qb_stack and require_bring_back else 0,
                     unique_primary_stacks=require_qb_stack,
+                    ownership_penalty=.05 if ownership_coverage >= .75 else 0,
                 )
                 use_tuned_3max = (
                     lineup_count == 3 and minimum_unique == 3
                     and maximum_player_exposure == .67 and maximum_qb_exposure == .67
-                    and maximum_dst_exposure == .67 and include_ceiling_lineup
+                    and maximum_dst_exposure == .34 and include_ceiling_lineup
                     and require_qb_stack and require_bring_back
                 )
                 lineups = (
@@ -268,11 +303,13 @@ if st.button(
                     maximum_players_per_team=4, maximum_kickers_and_defenses=1,
                     maximum_dst_opponents=1, require_multiplier_receiver_qb=True,
                     ceiling_weight=.3, excluded_player_ids=excluded_ids,
+                    limited_player_ids=limited_ids,
+                    ownership_penalty=.05 if ownership_coverage >= .75 else 0,
                 )
                 use_tuned_3max = (
                     lineup_count == 3 and minimum_unique == 2
                     and maximum_player_exposure == .67
-                    and maximum_multiplier_exposure == .67 and include_ceiling_lineup
+                    and maximum_multiplier_exposure == .34 and include_ceiling_lineup
                 )
                 lineups = (
                     generate_single_game_3max_portfolio(slate, matches, settings)
@@ -294,14 +331,49 @@ if st.button(
                     "Try raising exposure or lowering uniqueness."
                 )
             status.update(label="Portfolio ready", state="complete", expanded=False)
-        st.session_state["lineups"] = lineups
-        st.session_state["lineup_config_key"] = config_key
-        st.session_state["lineup_settings"] = {
+        lineup_settings = {
             "portfolio_mode": portfolio_label, "lineups": lineup_count,
             "minimum_unique_players": minimum_unique,
             "maximum_player_exposure": maximum_player_exposure,
+            "maximum_once_players": tuple(sorted(players[player_id].name for player_id in limited_ids)),
             "ceiling_lineup_number": lineup_count if include_ceiling_lineup else None,
         }
+        created_at = datetime.now(timezone.utc)
+        run_id = (
+            f"{created_at:%Y%m%dT%H%M%SZ}-{slate.platform.value}-"
+            f"{slate.contest_format.value}-{uuid4().hex[:6]}"
+        )
+        resolved_label = run_label.strip() or created_at.astimezone().strftime("%a %b %-d, %-I:%M %p")
+        run_archive = build_run_archive(
+            slate,
+            projections,
+            lineups,
+            lineup_settings,
+            st.session_state.get("salary_content"),
+            run_id=run_id,
+            run_label=resolved_label,
+            created_at=created_at,
+            projection_built_at=st.session_state.get("projection_built_at"),
+        )
+        archive_name = (
+            f"dfs-run-{slate.platform.value}-{slate.contest_format.value}.zip"
+        )
+        saved_run_path = None
+        try:
+            saved_run_path = save_run_archive(
+                run_archive, slate, created_at=created_at, run_id=run_id
+            )
+        except OSError:
+            # Hosted Streamlit filesystems may be ephemeral or read-only. The
+            # in-session download below remains the durable handoff.
+            pass
+        st.session_state["lineups"] = lineups
+        st.session_state["lineup_config_key"] = config_key
+        st.session_state["lineup_settings"] = lineup_settings
+        st.session_state["run_archive"] = run_archive
+        st.session_state["run_archive_name"] = archive_name
+        st.session_state["saved_run_path"] = str(saved_run_path) if saved_run_path else None
+        st.session_state["current_run_id"] = run_id
         st.switch_page("app_pages/results.py")
     except (ValueError, RuntimeError) as exc:
         st.error(f"Could not generate lineups: {exc}")

@@ -102,7 +102,33 @@ with st.expander("Download entries", icon=":material/download:", expanded=True):
             st.download_button("Download completed entry template", completed, "completed-entry-template.csv", "text/csv", disabled=blocking, icon=":material/download:", width="stretch")
         except (UnicodeError, ValueError) as exc:
             st.error(str(exc))
-    st.download_button("Download run archive", build_run_archive(slate, projections, lineups, st.session_state.get("lineup_settings", {})), "dfs-run.zip", "application/zip", disabled=blocking, icon=":material/archive:", width="stretch")
+    archive = st.session_state.get("run_archive")
+    if archive is None:
+        archive = build_run_archive(
+            slate,
+            projections,
+            lineups,
+            st.session_state.get("lineup_settings", {}),
+            salary_content=st.session_state.get("salary_content"),
+        )
+    st.download_button(
+        "Download complete run package",
+        archive,
+        st.session_state.get("run_archive_name") or "dfs-run.zip",
+        "application/zip",
+        disabled=blocking,
+        icon=":material/archive:",
+        width="stretch",
+    )
+    saved_run_path = st.session_state.get("saved_run_path")
+    if saved_run_path:
+        st.caption(f"A local backup was saved to `{saved_run_path}`.")
+
+if st.button("Review contest results", icon=":material/history:", width="stretch"):
+    st.switch_page("app_pages/backtest.py")
+
+if st.button("View run history", icon=":material/history_toggle_off:", width="stretch"):
+    st.switch_page("app_pages/run_history.py")
 
 if st.button("Back to player review", icon=":material/arrow_back:", width="stretch"):
     st.switch_page("app_pages/build.py")
