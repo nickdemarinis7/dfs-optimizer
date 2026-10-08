@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -272,6 +273,8 @@ if st.button(
 ):
     try:
         generation_warning = None
+        effective_limited_ids = limited_ids
+        effective_player_exposure = maximum_player_exposure
         matches = match_projections(slate, projections)
         with st.status("Optimizing portfolio…", expanded=True) as status:
             if slate.contest_format == ContestFormat.CLASSIC:
@@ -353,6 +356,51 @@ if st.button(
                             if include_ceiling_lineup else None
                         ),
                     )
+                if len(lineups) != lineup_count and limited_ids:
+                    effective_limited_ids = frozenset()
+                    relaxed_settings = replace(
+                        settings, limited_player_ids=effective_limited_ids
+                    )
+                    lineups = generate_single_game_lineups(
+                        slate, matches, lineup_count,
+                        minimum_unique_players=minimum_unique,
+                        maximum_player_exposure=maximum_player_exposure,
+                        maximum_multiplier_exposure=maximum_multiplier_exposure,
+                        settings=relaxed_settings,
+                        lineup_ceiling_weights=(
+                            (*([.3] * (lineup_count - 1)), .7)
+                            if include_ceiling_lineup else None
+                        ),
+                    )
+                    if len(lineups) == lineup_count:
+                        generation_warning = (
+                            "The requested portfolio was infeasible with the selected Max once "
+                            "players, so those caps were relaxed. Player exposure, uniqueness, "
+                            "and Captain/MVP limits are still enforced."
+                        )
+                if len(lineups) != lineup_count and maximum_player_exposure < 1:
+                    effective_player_exposure = 1.0
+                    effective_limited_ids = frozenset()
+                    relaxed_settings = replace(
+                        settings, limited_player_ids=effective_limited_ids
+                    )
+                    lineups = generate_single_game_lineups(
+                        slate, matches, lineup_count,
+                        minimum_unique_players=minimum_unique,
+                        maximum_player_exposure=effective_player_exposure,
+                        maximum_multiplier_exposure=maximum_multiplier_exposure,
+                        settings=relaxed_settings,
+                        lineup_ceiling_weights=(
+                            (*([.3] * (lineup_count - 1)), .7)
+                            if include_ceiling_lineup else None
+                        ),
+                    )
+                    if len(lineups) == lineup_count:
+                        generation_warning = (
+                            "The requested Showdown exposure caps were infeasible. Max once caps "
+                            "were removed and core players may appear in all lineups. Uniqueness "
+                            "and distinct Captain/MVP limits are still enforced."
+                        )
             if len(lineups) != lineup_count:
                 raise RuntimeError(
                     f"Only {len(lineups)} of {lineup_count} requested lineups could satisfy these settings. "
@@ -362,8 +410,10 @@ if st.button(
         lineup_settings = {
             "portfolio_mode": portfolio_label, "lineups": lineup_count,
             "minimum_unique_players": minimum_unique,
-            "maximum_player_exposure": maximum_player_exposure,
-            "maximum_once_players": tuple(sorted(players[player_id].name for player_id in limited_ids)),
+            "maximum_player_exposure": effective_player_exposure,
+            "maximum_once_players": tuple(sorted(
+                players[player_id].name for player_id in effective_limited_ids
+            )),
             "ceiling_lineup_number": lineup_count if include_ceiling_lineup else None,
         }
         created_at = datetime.now(timezone.utc)
