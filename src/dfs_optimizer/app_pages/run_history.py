@@ -89,6 +89,7 @@ with st.container(border=True):
             st.session_state["run_archive_name"] = selected.path.name
             st.session_state["saved_run_path"] = str(selected.path)
             st.session_state["current_run_id"] = selected.run_id
+            st.session_state["scenario_analysis"] = ()
             st.session_state["lineup_config_key"] = None
             st.session_state["current_config_key"] = None
             st.switch_page("app_pages/results.py")

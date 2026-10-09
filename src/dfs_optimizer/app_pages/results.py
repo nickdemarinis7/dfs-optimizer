@@ -10,6 +10,7 @@ from dfs_optimizer.exporters import lineups_csv_text, merge_lineups_into_templat
 from dfs_optimizer.services.portfolio import analyze_portfolio
 from dfs_optimizer.services.preflight import preflight_lineups
 from dfs_optimizer.services.run_archive import build_run_archive
+from dfs_optimizer.services.scenarios import simulate_lineups
 
 
 slate = st.session_state.get("slate")
@@ -57,6 +58,11 @@ selected_number = st.segmented_control(
     width="stretch",
 )
 lineup = lineups[selected_number - 1]
+scenario_analysis = st.session_state.get("scenario_analysis", ())
+if len(scenario_analysis) != len(lineups):
+    scenario_analysis = simulate_lineups(lineups)
+    st.session_state["scenario_analysis"] = scenario_analysis
+lineup_scenario = scenario_analysis[selected_number - 1]
 role = (
     "Ceiling"
     if selected_number == st.session_state.get("lineup_settings", {}).get("ceiling_lineup_number")
@@ -69,12 +75,18 @@ ceiling = sum(
 )
 with st.container(border=True):
     st.subheader(role)
+    st.caption(lineup_scenario.label)
     top_metrics = st.columns(2)
     top_metrics[0].metric("Median", f"{lineup.projected_points:.2f}")
     top_metrics[1].metric("Ceiling", f"{ceiling:.2f}")
     bottom_metrics = st.columns(2)
     bottom_metrics[0].metric("Salary", f"${lineup.salary:,}")
     bottom_metrics[1].metric("Unused", f"${lineup.salary_cap - lineup.salary:,}")
+    simulation_metrics = st.columns(2)
+    simulation_metrics[0].metric("Simulated P90", f"{lineup_scenario.p90:.2f}")
+    simulation_metrics[1].metric(
+        "Portfolio lead rate", f"{lineup_scenario.top_rate:.1%}"
+    )
     st.dataframe(pd.DataFrame([{
         "Slot": entry.slot,
         "Player": entry.player.name,
@@ -89,6 +101,32 @@ with st.expander("Portfolio exposure", icon=":material/donut_large:"):
         st.warning(warning)
     counts = Counter(e.player.name for lineup in lineups for e in lineup.entries)
     st.dataframe(pd.DataFrame([{"Player": name, "Appearances": count, "Exposure": 100 * count / len(lineups)} for name, count in counts.most_common()]), width="stretch", hide_index=True)
+
+with st.expander("Game scripts", icon=":material/casino:"):
+    st.caption(
+        "Two thousand correlated simulations using shared game, team, passing, and rushing factors."
+    )
+    st.dataframe(
+        pd.DataFrame([
+            {
+                "Lineup": item.lineup_number,
+                "Game script": item.label,
+                "Mean": item.mean,
+                "P75": item.p75,
+                "P90": item.p90,
+                "Lead rate": item.top_rate,
+            }
+            for item in scenario_analysis
+        ]),
+        column_config={
+            "Mean": st.column_config.NumberColumn(format="%.2f"),
+            "P75": st.column_config.NumberColumn(format="%.2f"),
+            "P90": st.column_config.NumberColumn(format="%.2f"),
+            "Lead rate": st.column_config.NumberColumn(format="percent"),
+        },
+        hide_index=True,
+        width="stretch",
+    )
 
 with st.expander("Pre-submit audit", icon=":material/fact_check:", expanded=blocking):
     if audit:

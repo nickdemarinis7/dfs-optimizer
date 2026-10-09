@@ -30,6 +30,7 @@ for key, default in (
     ("saved_run_path", None),
     ("current_run_id", None),
     ("generation_warning", None),
+    ("scenario_analysis", ()),
 ):
     st.session_state.setdefault(key, default)
 

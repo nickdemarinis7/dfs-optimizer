@@ -71,6 +71,7 @@ if st.session_state.get("slate") != slate:
         "lineup_config_key", "run_archive", "run_archive_name", "saved_run_path",
         "current_run_id",
         "generation_warning",
+        "scenario_analysis",
     ):
         st.session_state.pop(key, None)
 st.session_state["slate"] = slate

@@ -205,6 +205,8 @@ def generate_classic_3max_portfolio(
         raise LineupOptimizationError(
             "not enough distinct candidate lineups to build a 3-max portfolio"
         )
+    from dfs_optimizer.services.scenarios import simulate_lineups
+    scenario_analysis = simulate_lineups(candidates, simulations=750)
 
     model = cp_model.CpModel()
     balanced = [model.new_bool_var(f"balanced_{index}") for index in range(len(candidates))]
@@ -261,6 +263,10 @@ def generate_classic_3max_portfolio(
         ceiling_score = sum(
             _objective_points(entry.projection, ceiling_settings) for entry in lineup.entries
         )
+        # Reward lineup-level correlated upside that a sum of independent player
+        # ceilings cannot represent.
+        balanced_score += scenario_analysis[index].p75 * .05
+        ceiling_score += scenario_analysis[index].p90 * .15
         role_scores.extend((
             round(balanced_score * score_scale) * balanced[index],
             round(ceiling_score * score_scale) * ceiling[index],

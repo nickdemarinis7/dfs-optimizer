@@ -158,6 +158,8 @@ def generate_single_game_3max_portfolio(
     candidates = tuple(candidates_by_key.values())
     if len(candidates) < 3:
         raise LineupOptimizationError("not enough Showdown candidates for a 3-max portfolio")
+    from dfs_optimizer.services.scenarios import simulate_lineups
+    scenario_analysis = simulate_lineups(candidates, simulations=750)
 
     model = cp_model.CpModel()
     balanced = [model.new_bool_var(f"balanced_{i}") for i in range(len(candidates))]
@@ -173,10 +175,7 @@ def generate_single_game_3max_portfolio(
         selected.append(chosen)
         player_sets.append({entry.player.platform_id for entry in lineup.entries})
         captain_ids.append(lineup.entries[0].player.platform_id)
-        ceilings.append(sum(
-            (entry.projection.ceiling or entry.projection.projected_points)
-            * entry.point_multiplier for entry in lineup.entries
-        ))
+        ceilings.append(scenario_analysis[i].p90)
     model.add(sum(balanced) == 2)
     model.add(sum(ceiling) == 1)
 
@@ -231,8 +230,8 @@ def generate_single_game_3max_portfolio(
     scale = 1_000
     model.maximize(
         sum(
-            round(role_score(lineup, balanced_settings) * scale) * balanced[i]
-            + round(role_score(lineup, ceiling_settings) * scale) * ceiling[i]
+            round((role_score(lineup, balanced_settings) + scenario_analysis[i].p75 * .05) * scale) * balanced[i]
+            + round((role_score(lineup, ceiling_settings) + scenario_analysis[i].p90 * .15) * scale) * ceiling[i]
             for i, lineup in enumerate(candidates)
         )
         - sum(cost * 100 * variable for cost, variable in pair_penalties)

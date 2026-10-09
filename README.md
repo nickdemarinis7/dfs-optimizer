@@ -292,6 +292,16 @@ minimum threshold). The Backtest screen extracts unmultiplied player outcomes
 from final standings and reports MAE, RMSE, bias, correlation, interval coverage,
 position-level error, and the largest individual misses.
 
+Joint 3-max selection runs deterministic correlated simulations over those
+distributions. Shared game, team, passing, and rushing factors move related
+players together, while player-specific variance preserves individual upside.
+Classic and Showdown candidate portfolios receive a modest simulation-based
+P75/P90 bonus rather than assuming every player's ceiling occurs independently.
+The Results screen labels each lineup's game-script thesis and reports its
+simulated P90 and portfolio lead rate. These simulations are decision-support
+estimates—not calibrated probabilities of winning a contest—and should be
+revalidated as additional slates are archived.
+
 Pregame context then applies bounded adjustments for opponent passing/rushing
 efficiency allowed, market-implied team points, spread-driven game script, and
 outdoor wind. Current injury automation is deliberately not sourced from

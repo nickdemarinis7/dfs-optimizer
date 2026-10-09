@@ -22,6 +22,7 @@ from dfs_optimizer.optimization import (
 )
 from dfs_optimizer.services.projections import apply_uploaded_ownership
 from dfs_optimizer.services.risk import suggest_max_once_player_ids
+from dfs_optimizer.services.scenarios import simulate_lineups
 try:
     from dfs_optimizer.services.run_archive import build_run_archive, save_run_archive
 except ImportError:
@@ -423,6 +424,18 @@ if st.button(
             )),
             "ceiling_lineup_number": lineup_count if include_ceiling_lineup else None,
         }
+        scenario_analysis = simulate_lineups(lineups)
+        lineup_settings["scenario_analysis"] = [
+            {
+                "lineup_number": item.lineup_number,
+                "label": item.label,
+                "mean": item.mean,
+                "p75": item.p75,
+                "p90": item.p90,
+                "top_rate": item.top_rate,
+            }
+            for item in scenario_analysis
+        ]
         created_at = datetime.now(timezone.utc)
         run_id = (
             f"{created_at:%Y%m%dT%H%M%SZ}-{slate.platform.value}-"
@@ -460,6 +473,7 @@ if st.button(
         st.session_state["saved_run_path"] = str(saved_run_path) if saved_run_path else None
         st.session_state["current_run_id"] = run_id
         st.session_state["generation_warning"] = generation_warning
+        st.session_state["scenario_analysis"] = scenario_analysis
         st.switch_page("app_pages/results.py")
     except (ValueError, RuntimeError) as exc:
         st.error(f"Could not generate lineups: {exc}")
