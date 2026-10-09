@@ -8,7 +8,14 @@ from uuid import uuid4
 import pandas as pd
 import streamlit as st
 
-from dfs_optimizer.app_ui import apply_platform_theme, hero, page_kicker, summary_strip
+from dfs_optimizer.app_ui import (
+    action_guide,
+    apply_platform_theme,
+    hero,
+    optional_label,
+    page_kicker,
+    summary_strip,
+)
 from dfs_optimizer.importers import match_projections
 from dfs_optimizer.models import ContestFormat, Position
 from dfs_optimizer.optimization import (
@@ -41,14 +48,20 @@ projections = st.session_state.get("projections", ())
 if slate is not None:
     apply_platform_theme(slate.platform)
 page_kicker(2, "Build")
-hero("Shape your portfolio.", "Review the signals, make a few intentional player calls, and let the optimizer build the combinations.")
+hero("Review, then build.", "Check the players who need attention. The recommended tournament settings are already filled in.")
 if slate is None or not projections:
     st.warning("Build projections on the Slate & projections screen first.", icon=":material/arrow_back:")
     st.stop()
 
 projection_by_id = {item.platform_id: item for item in projections}
 default_unique = 3 if slate.contest_format == ContestFormat.CLASSIC else 2
-with st.popover("Lineup settings", icon=":material/tune:", width="stretch"):
+action_guide(
+    1,
+    "Review flagged players",
+    "Use the status and signal tables below. Exclude anyone who is out or who you do not want in a lineup.",
+)
+optional_label("Optional controls")
+with st.popover("Adjust lineup settings", icon=":material/tune:", width="stretch"):
     st.caption("The defaults are tuned for a three-entry tournament portfolio.")
     lineup_count = int(st.number_input(
         "Number of lineups", min_value=1, max_value=20, value=3, step=1,
@@ -148,7 +161,7 @@ ownership_coverage = (
     if projections else 0
 )
 
-st.subheader("Player pool")
+st.subheader("Players to review")
 status_view = st.segmented_control(
     "Status filter",
     ("All", "Available", "Flagged", "Unavailable"),
@@ -259,6 +272,12 @@ if ownership_coverage >= .75:
     strategy_parts.append("ownership leverage")
 st.caption(" · ".join(strategy_parts))
 
+action_guide(
+    2,
+    "Generate your portfolio",
+    "If the flagged players look right, use the button below. You’ll move directly to review and download.",
+)
+
 config_key = (
     st.session_state.get("projection_key"), st.session_state.get("ownership_hash"),
     hash(slate), tuple(sorted(locked_ids)), tuple(sorted(excluded_ids)), tuple(sorted(limited_ids)),
@@ -274,7 +293,7 @@ if st.session_state.get("lineups") and st.session_state.get("lineup_config_key")
     st.warning("Existing results are stale. Generate again before exporting.", icon=":material/update:")
 
 if st.button(
-    f"Generate {lineup_count} lineup{'s' if lineup_count != 1 else ''}",
+    f"Generate {lineup_count} lineup{'s' if lineup_count != 1 else ''} and review",
     type="primary", icon=":material/bolt:", width="stretch",
 ):
     try:

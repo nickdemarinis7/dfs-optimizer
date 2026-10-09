@@ -21,9 +21,12 @@ def apply_app_style() -> None:
             --ls-mark-end: #0055b8;
         }
         /* Keep the interface focused and phone-like on large displays. */
-        .stMainBlockContainer {
+        .stMainBlockContainer,
+        [data-testid="stMainBlockContainer"] {
             max-width: 48rem;
-            padding-top: 1.5rem;
+            /* Streamlit Cloud's toolbar overlays the document. Reserve its
+               height plus the iPhone safe area so navigation is never hidden. */
+            padding-top: calc(4.75rem + env(safe-area-inset-top)) !important;
             padding-bottom: 5rem;
         }
 
@@ -42,9 +45,7 @@ def apply_app_style() -> None:
         [data-testid="stCaptionContainer"] { color: #6e6e73; }
 
         .st-key-lineup-studio-topbar {
-            position: sticky;
-            top: .7rem;
-            z-index: 999;
+            position: relative;
             padding: .42rem .5rem;
             margin: 0 0 2.2rem;
             border: 1px solid rgba(210, 210, 215, .68);
@@ -157,6 +158,48 @@ def apply_app_style() -> None:
             gap: .5rem;
             margin: -1rem 0 2rem;
         }
+        .lineup-studio-guide {
+            display: flex;
+            align-items: flex-start;
+            gap: .85rem;
+            padding: 1rem 1.1rem;
+            margin: 0 0 1.35rem;
+            border: 1px solid rgba(var(--ls-primary-rgb), .12);
+            border-radius: 18px;
+            background: linear-gradient(135deg, var(--ls-soft), rgba(255,255,255,.82));
+        }
+        .lineup-studio-guide-number {
+            display: grid;
+            flex: 0 0 auto;
+            place-items: center;
+            width: 2rem;
+            height: 2rem;
+            border-radius: 50%;
+            color: white;
+            background: var(--ls-primary);
+            font-size: .82rem;
+            font-weight: 700;
+        }
+        .lineup-studio-guide strong {
+            display: block;
+            margin: .05rem 0 .18rem;
+            color: #1d1d1f;
+            font-size: .98rem;
+        }
+        .lineup-studio-guide p {
+            margin: 0;
+            color: #626267;
+            font-size: .86rem;
+            line-height: 1.45;
+        }
+        .lineup-studio-section-label {
+            margin: 1.5rem 0 .55rem;
+            color: #86868b;
+            font-size: .72rem;
+            font-weight: 700;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+        }
         .lineup-studio-feature {
             padding: .5rem .75rem;
             border: 1px solid rgba(var(--ls-primary-rgb), .10);
@@ -235,13 +278,13 @@ def apply_app_style() -> None:
         }
 
         @media (max-width: 640px) {
-            .stMainBlockContainer {
-                padding: 1.25rem 1rem 4.5rem;
+            .stMainBlockContainer,
+            [data-testid="stMainBlockContainer"] {
+                padding: calc(4.25rem + env(safe-area-inset-top)) 1rem 4.5rem !important;
             }
             h1 { font-size: 2rem !important; }
             [data-testid="stMetricValue"] { font-size: 1.5rem; }
             .st-key-lineup-studio-topbar {
-                top: .35rem;
                 margin-bottom: 1.65rem;
             }
             .lineup-studio-step-label { display: none; }
@@ -303,6 +346,25 @@ def feature_strip(*features: str) -> None:
         for feature in features
     )
     st.html(f'<div class="lineup-studio-features">{items}</div>')
+
+
+def action_guide(number: int | str, title: str, detail: str) -> None:
+    """Show the single action that moves the workflow forward."""
+    st.html(
+        f"""
+        <div class="lineup-studio-guide">
+            <span class="lineup-studio-guide-number">{escape(str(number))}</span>
+            <div>
+                <strong>{escape(title)}</strong>
+                <p>{escape(detail)}</p>
+            </div>
+        </div>
+        """
+    )
+
+
+def optional_label(label: str = "Optional") -> None:
+    st.html(f'<div class="lineup-studio-section-label">{escape(label)}</div>')
 
 
 def summary_strip(title: str, detail: str) -> None:

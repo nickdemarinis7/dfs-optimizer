@@ -5,7 +5,7 @@ import hashlib
 import pandas as pd
 import streamlit as st
 
-from dfs_optimizer.app_ui import apply_platform_theme, hero, page_kicker
+from dfs_optimizer.app_ui import action_guide, apply_platform_theme, hero, page_kicker
 from dfs_optimizer.backtesting import (
     evaluate_projection_rows,
     evaluate_projections,
@@ -33,6 +33,11 @@ page_kicker(None, "Backtest")
 hero(
     "How did they finish?",
     "Drop in the contest standings after it ends. We’ll find your generated lineups and grade the run automatically.",
+)
+action_guide(
+    1,
+    "Upload the final contest standings",
+    "Use this only after scoring is complete. Export the standings from your contest site and add your username for the most reliable match.",
 )
 
 if slate is None or not lineups:

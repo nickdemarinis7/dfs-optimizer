@@ -6,9 +6,10 @@ from pathlib import Path
 import streamlit as st
 
 from dfs_optimizer.app_ui import (
+    action_guide,
     apply_platform_theme,
-    feature_strip,
     hero,
+    optional_label,
     page_kicker,
     summary_strip,
 )
@@ -30,15 +31,18 @@ def _forecast(slate, season: int, week: int, cache_dir: str, model_version: str)
 
 
 page_kicker(1, "Set up", home=False)
-hero("Build your Sunday.", "Drop in a salary file. Lineup Studio handles the contest, slate, and projection setup.")
-feature_strip("Live slate workflow", "Correlated simulations", "Post-contest learning")
+hero("Start with your slate.", "Upload one official salary file. We’ll detect the site and contest, then guide you through the rest.")
+action_guide(
+    1,
+    "Upload a salary CSV",
+    "Download the player list from DraftKings or FanDuel, then choose that file below. Nothing else is needed yet.",
+)
 slate = None
 source_name = None
 salary_content = None
 upload = st.file_uploader(
-    "DraftKings or FanDuel salary CSV",
+    "Choose a DraftKings or FanDuel salary CSV",
     type="csv",
-    label_visibility="collapsed",
 )
 if upload:
     try:
@@ -48,7 +52,8 @@ if upload:
     except (OSError, ValueError) as exc:
         st.error(str(exc))
 
-with st.container(horizontal=True):
+optional_label("Already started?")
+with st.container(horizontal=True, wrap=True):
     with st.popover("Saved slates", icon=":material/folder:"):
         folder = st.text_input("Import folder", value="samples")
         discovered = discover_salary_files(folder)
@@ -68,6 +73,7 @@ with st.container(horizontal=True):
         st.switch_page("app_pages/run_history.py")
 
 if slate is None:
+    st.caption("After upload, this screen will confirm your slate and show one button to continue.")
     st.stop()
 
 apply_platform_theme(slate.platform)
@@ -94,10 +100,17 @@ summary_strip(
     f"{len(slate.games)} games · {len(slate.players)} players",
 )
 
+action_guide(
+    2,
+    "Build this week’s projections",
+    "The recommended historical model is selected for you. Confirm the detected week, then continue to player review.",
+)
+
 method = "Historical forecast"
 cache_dir = "data/cache"
+optional_label("Advanced projection options")
 with st.container(horizontal=True):
-    with st.popover("Model", icon=":material/auto_awesome:"):
+    with st.popover("Change projection model", icon=":material/tune:"):
         method = st.selectbox(
             "Projection method", ("Historical forecast", "Salary-file average")
         )
@@ -141,7 +154,7 @@ else:
         str(Path(cache_dir).expanduser()),
     )
     if st.button(
-        "Build projections", type="primary", icon=":material/auto_awesome:",
+        "Build projections and review players", type="primary", icon=":material/arrow_forward:",
         disabled=not ready, width="stretch",
     ):
         try:

@@ -6,7 +6,7 @@ import hashlib
 import pandas as pd
 import streamlit as st
 
-from dfs_optimizer.app_ui import apply_platform_theme, hero, page_kicker
+from dfs_optimizer.app_ui import action_guide, apply_platform_theme, hero, optional_label, page_kicker
 from dfs_optimizer.exporters import lineups_csv_text, merge_lineups_into_template
 from dfs_optimizer.services.portfolio import analyze_portfolio
 from dfs_optimizer.services.preflight import preflight_lineups
@@ -26,7 +26,7 @@ lineups = st.session_state.get("lineups", ())
 if slate is not None:
     apply_platform_theme(slate.platform)
 page_kicker(3, "Review")
-hero("Your portfolio.", "Move between lineups, inspect the tradeoffs, and export when everything looks right.")
+hero("Your lineups are ready.", "Review each lineup, download the entry file, then upload it to your contest site.")
 if slate is None or not projections or not lineups:
     st.warning("Generate a portfolio on the Build lineups screen first.", icon=":material/arrow_back:")
     st.stop()
@@ -53,6 +53,11 @@ if stale:
         "These results are stale because player decisions changed. Regenerate before exporting.",
         icon=":material/update:",
     )
+action_guide(
+    1,
+    "Review every lineup",
+    "Tap the lineup numbers below and confirm the players, salary, and any warnings before downloading.",
+)
 selected_number = st.segmented_control(
     "Lineup",
     tuple(range(1, len(lineups) + 1)),
@@ -103,6 +108,7 @@ with st.container(border=True):
         "Status": entry.player.status or "",
     } for entry in lineup.entries]), width="stretch", hide_index=True)
 
+optional_label("Deeper analysis")
 with st.expander("Portfolio exposure", icon=":material/donut_large:"):
     for warning in diagnostics.warnings:
         st.warning(warning)
@@ -141,6 +147,11 @@ with st.expander("Pre-submit audit", icon=":material/fact_check:", expanded=bloc
     else:
         st.success("No pre-submit audit findings.")
 
+action_guide(
+    2,
+    "Download and submit",
+    "Download the lineup CSV below, then upload it on DraftKings or FanDuel. A blocking warning disables downloads until it is fixed.",
+)
 with st.expander("Download entries", icon=":material/download:", expanded=True):
     st.download_button("Download lineup CSV", lineups_csv_text(lineups, slate.platform).encode(), "lineups.csv", "text/csv", disabled=blocking, icon=":material/download:", width="stretch")
     template = st.file_uploader("Official contest-entry template (optional)", type="csv")
@@ -172,6 +183,11 @@ with st.expander("Download entries", icon=":material/download:", expanded=True):
     if saved_run_path:
         st.caption(f"A local backup was saved to `{saved_run_path}`.")
 
+action_guide(
+    3,
+    "Save what you actually entered",
+    "After submitting on the contest site, upload the completed entry CSV here so later results are matched to the real rosters.",
+)
 with st.expander("Capture final submission", icon=":material/verified:"):
     st.caption(
         "After uploading entries to the platform, add that completed CSV here. "
@@ -234,6 +250,7 @@ with st.expander("Capture final submission", icon=":material/verified:"):
         except (UnicodeError, ValueError) as exc:
             st.error(str(exc))
 
+optional_label("After the contest")
 if st.button("Review contest results", icon=":material/history:", width="stretch"):
     st.switch_page("app_pages/backtest.py")
 

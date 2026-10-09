@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from dfs_optimizer.app_ui import apply_platform_theme, hero, page_kicker
+from dfs_optimizer.app_ui import action_guide, apply_platform_theme, hero, page_kicker
 from dfs_optimizer.services.run_history import (
     compare_runs,
     list_run_records,
@@ -21,6 +21,11 @@ page_kicker(None, "Run history")
 hero(
     "Every run, preserved.",
     "Compare early-week and game-day portfolios, reopen any snapshot, and mark the one you actually submitted.",
+)
+action_guide(
+    1,
+    "Choose a saved run",
+    "Open an earlier portfolio, compare two generations, or mark the exact run you submitted as final.",
 )
 
 records = list_run_records()
