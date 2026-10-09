@@ -4,6 +4,11 @@ import pandas as pd
 import streamlit as st
 
 from dfs_optimizer.app_ui import apply_platform_theme, hero
+from dfs_optimizer.backtesting import (
+    evaluate_projection_rows,
+    evaluate_projections,
+    import_player_results_content,
+)
 from dfs_optimizer.services.results_review import (
     extract_submitted_entries,
     review_contest_results,
@@ -12,6 +17,7 @@ from dfs_optimizer.services.results_review import (
 
 slate = st.session_state.get("slate")
 lineups = st.session_state.get("lineups", ())
+projections = st.session_state.get("projections", ())
 if slate is not None:
     apply_platform_theme(slate.platform)
 
@@ -118,6 +124,75 @@ if results_file is not None:
             numbers = ", ".join(map(str, review.ambiguous_lineups))
             st.warning(
                 f"Lineup(s) {numbers} matched entries with different scores. Add your username above to identify yours."
+            )
+
+        st.subheader("Projection evaluation")
+        try:
+            actuals = import_player_results_content(
+                results_file.getvalue(),
+                results_file.name,
+                {player.name: player.primary_position.value for player in slate.players},
+            )
+            projection_metrics = evaluate_projections(tuple(projections), actuals)
+            evaluation_rows = evaluate_projection_rows(tuple(projections), actuals)
+        except ValueError as exc:
+            st.info(f"Player-level evaluation is unavailable: {exc}")
+        else:
+            metric_columns = st.columns(3)
+            metric_columns[0].metric("Players matched", projection_metrics.matched_players)
+            metric_columns[1].metric("MAE", f"{projection_metrics.mean_absolute_error:.2f}")
+            metric_columns[2].metric("Bias", f"{projection_metrics.mean_error:+.2f}")
+            calibration_columns = st.columns(3)
+            calibration_columns[0].metric("RMSE", f"{projection_metrics.root_mean_squared_error:.2f}")
+            calibration_columns[1].metric(
+                "Correlation",
+                f"{projection_metrics.correlation:.2f}"
+                if projection_metrics.correlation is not None else "—",
+            )
+            calibration_columns[2].metric(
+                "Range coverage",
+                f"{projection_metrics.interval_coverage:.0%}"
+                if projection_metrics.interval_coverage is not None else "—",
+            )
+            evaluation_frame = pd.DataFrame([
+                {
+                    "Player": row.name,
+                    "Pos": row.position,
+                    "Projected": row.projected,
+                    "Actual": row.actual,
+                    "Error": row.error,
+                    "Absolute error": row.absolute_error,
+                }
+                for row in evaluation_rows
+            ])
+            position_frame = (
+                evaluation_frame.groupby("Pos", as_index=False)
+                .agg(
+                    Players=("Player", "count"),
+                    MAE=("Absolute error", "mean"),
+                    Bias=("Error", "mean"),
+                )
+                .sort_values("MAE", ascending=False)
+            )
+            st.caption("Error by position")
+            st.dataframe(
+                position_frame,
+                column_config={
+                    "MAE": st.column_config.NumberColumn(format="%.2f"),
+                    "Bias": st.column_config.NumberColumn(format="%+.2f"),
+                },
+                hide_index=True,
+                width="stretch",
+            )
+            st.caption("Largest player misses")
+            st.dataframe(
+                evaluation_frame.sort_values("Absolute error", ascending=False),
+                column_config={
+                    column: st.column_config.NumberColumn(format="%.2f")
+                    for column in ("Projected", "Actual", "Error", "Absolute error")
+                },
+                hide_index=True,
+                width="stretch",
             )
 
 if st.button("Back to results", icon=":material/arrow_back:", width="stretch"):

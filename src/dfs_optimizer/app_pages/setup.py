@@ -15,7 +15,7 @@ from dfs_optimizer.services.projections import (
 from dfs_optimizer.services.slates import discover_salary_files, infer_slate_period, load_uploaded_salary_file
 
 
-FORECAST_MODEL_VERSION = "suffix-match-v4"
+FORECAST_MODEL_VERSION = "outcome-distributions-v5"
 
 
 @st.cache_data(max_entries=8)

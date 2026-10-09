@@ -11,7 +11,10 @@ from dfs_optimizer.models import Player, Projection, Slate
 
 REQUIRED_COLUMNS = frozenset({"name", "team", "projected_points"})
 OPTIONAL_COLUMNS = frozenset(
-    {"platform_id", "floor", "ceiling", "projected_ownership"}
+    {
+        "platform_id", "floor", "ceiling", "projected_ownership",
+        "p10", "p25", "p75", "p90", "bust_probability",
+    }
 )
 
 
@@ -53,6 +56,11 @@ def import_projections_csv(path: str | Path) -> tuple[Projection, ...]:
                 floor=_optional_float(row.get("floor")),
                 ceiling=_optional_float(row.get("ceiling")),
                 projected_ownership=_optional_float(row.get("projected_ownership")),
+                p10=_optional_float(row.get("p10")),
+                p25=_optional_float(row.get("p25")),
+                p75=_optional_float(row.get("p75")),
+                p90=_optional_float(row.get("p90")),
+                bust_probability=_optional_float(row.get("bust_probability")),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ProjectionImportError(
@@ -113,4 +121,3 @@ def _optional_text(value: str | None) -> str | None:
 
 def _optional_float(value: str | None) -> float | None:
     return float(value) if value and value.strip() else None
-

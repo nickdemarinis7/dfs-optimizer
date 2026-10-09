@@ -54,9 +54,16 @@ def build_run_archive(
         archive.writestr("lineups.csv", lineups_csv_text(lineups, slate.platform))
         projection_output = io.StringIO(newline="")
         writer = csv.writer(projection_output)
-        writer.writerow(("name", "team", "platform_id", "projected_points", "floor", "ceiling", "projected_ownership"))
+        writer.writerow((
+            "name", "team", "platform_id", "projected_points", "floor", "ceiling",
+            "projected_ownership", "p10", "p25", "p75", "p90", "bust_probability",
+        ))
         for item in projections:
-            writer.writerow((item.name, item.team, item.platform_id or "", item.projected_points, item.floor, item.ceiling, item.projected_ownership))
+            writer.writerow((
+                item.name, item.team, item.platform_id or "", item.projected_points,
+                item.floor, item.ceiling, item.projected_ownership,
+                item.p10, item.p25, item.p75, item.p90, item.bust_probability,
+            ))
         archive.writestr("projections.csv", projection_output.getvalue())
     return output.getvalue()
 

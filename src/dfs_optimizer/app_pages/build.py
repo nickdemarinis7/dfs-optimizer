@@ -181,7 +181,11 @@ for player in players.values():
         "Opp": player.opponent,
         "Salary": player.salary,
         "Projection": projection.projected_points,
-        "Ceiling": projection.ceiling,
+        "P90": projection.p90 if projection.p90 is not None else projection.ceiling,
+        "Bust %": (
+            100 * projection.bust_probability
+            if projection.bust_probability is not None else None
+        ),
         "Status": (player.status or "Available").upper(),
     })
 
@@ -191,7 +195,8 @@ st.dataframe(
     column_config={
         "Salary": st.column_config.NumberColumn(format="$%d"),
         "Projection": st.column_config.NumberColumn(format="%.1f"),
-        "Ceiling": st.column_config.NumberColumn(format="%.1f"),
+        "P90": st.column_config.NumberColumn(format="%.1f"),
+        "Bust %": st.column_config.NumberColumn(format="%.0f%%"),
     },
     width="stretch",
     hide_index=True,

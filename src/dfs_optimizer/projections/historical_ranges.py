@@ -21,7 +21,7 @@ def add_historical_ranges(
     target_week: int,
     games_used: int = 8,
 ) -> tuple[Projection, ...]:
-    """Add empirical 20th/80th-percentile ranges using only prior games."""
+    """Add empirical outcome distributions using only games before the target."""
     scoring = nfl_scoring_for(slate.platform)
     offense = defaultdict(list)
     for row in _rows(player_files):
@@ -84,17 +84,34 @@ def add_historical_ranges(
         history = defenses.get(player.team, []) if player and player.primary_position == Position.DST else offense.get(_normalize(projection.name), [])
         scores = [score for _, score in sorted(history, reverse=True)[:games_used]]
         if not scores:
-            enriched.append(replace(projection, floor=projection.projected_points, ceiling=projection.projected_points))
+            point = projection.projected_points
+            enriched.append(replace(
+                projection, floor=point, ceiling=point,
+                p10=point, p25=point, p75=point, p90=point,
+            ))
             continue
         historical_mean = sum(scores) / len(scores)
         context_scale = projection.projected_points / historical_mean if historical_mean > 0 else 1
         context_scale = max(0.75, min(1.25, context_scale))
-        floor = _quantile(scores, 0.20) * context_scale
-        ceiling = _quantile(scores, 0.80) * context_scale
+        raw_p10 = _quantile(scores, 0.10) * context_scale
+        raw_p25 = _quantile(scores, 0.25) * context_scale
+        raw_p75 = _quantile(scores, 0.75) * context_scale
+        raw_p90 = _quantile(scores, 0.90) * context_scale
+        p10 = max(0, min(raw_p10, projection.projected_points))
+        p25 = max(p10, min(raw_p25, projection.projected_points))
+        p90 = max(projection.projected_points, raw_p90)
+        p75 = min(p90, max(projection.projected_points, raw_p75))
+        bust_line = max(2.0, projection.projected_points * 0.5)
+        bust_probability = sum(score <= bust_line for score in scores) / len(scores)
         enriched.append(replace(
             projection,
-            floor=min(floor, projection.projected_points),
-            ceiling=max(ceiling, projection.projected_points),
+            floor=p25,
+            ceiling=p90,
+            p10=p10,
+            p25=p25,
+            p75=p75,
+            p90=p90,
+            bust_probability=bust_probability,
         ))
     return tuple(enriched)
 

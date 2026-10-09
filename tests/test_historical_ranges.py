@@ -40,6 +40,11 @@ class HistoricalRangeTests(unittest.TestCase):
             self.assertIsNotNone(result.ceiling)
             self.assertLess(result.ceiling, 30)
             self.assertGreaterEqual(result.ceiling, result.projected_points)
+            self.assertLessEqual(result.p10, result.p25)
+            self.assertLessEqual(result.p25, result.projected_points)
+            self.assertGreaterEqual(result.p75, result.projected_points)
+            self.assertGreaterEqual(result.p90, result.p75)
+            self.assertIsNotNone(result.bust_probability)
 
 
 if __name__ == "__main__":

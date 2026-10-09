@@ -80,7 +80,8 @@ reports each matched lineup's score, rank, top-field percentage, and duplication
 ## Projection CSV format
 
 Required columns are `name`, `team`, and `projected_points`. Optional columns
-are `platform_id`, `floor`, `ceiling`, and `projected_ownership`. Ownership is
+are `platform_id`, `floor`, `ceiling`, `projected_ownership`, `p10`, `p25`,
+`p75`, `p90`, and `bust_probability`. Ownership is
 expressed as a percentage from 0 through 100. A platform ID is the strongest
 match; otherwise, projections match salaries by normalized name and team.
 
@@ -282,6 +283,14 @@ The model forecasts opportunity (attempts, carries, and targets) separately
 from efficiency. Efficiency rates are shrunk toward position-level league
 rates, while current-team games with no recorded usage count as zero-opportunity
 evidence. This keeps small samples and obsolete starter roles from dominating.
+
+Historical forecasts also build leakage-safe P10/P25/P50/P75/P90 outcome
+distributions from games completed before the target week. P50 is the normal
+projection, P90 is the tournament ceiling, and bust probability is the share of
+recent outcomes at or below half the current median projection (with a two-point
+minimum threshold). The Backtest screen extracts unmultiplied player outcomes
+from final standings and reports MAE, RMSE, bias, correlation, interval coverage,
+position-level error, and the largest individual misses.
 
 Pregame context then applies bounded adjustments for opponent passing/rushing
 efficiency allowed, market-implied team points, spread-driven game script, and

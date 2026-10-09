@@ -181,6 +181,9 @@ def _read_projections(content: bytes) -> tuple[Projection, ...]:
         name=row["name"], team=row["team"], platform_id=row["platform_id"] or None,
         projected_points=float(row["projected_points"]), floor=optional(row["floor"]),
         ceiling=optional(row["ceiling"]), projected_ownership=optional(row.get("projected_ownership")),
+        p10=optional(row.get("p10")), p25=optional(row.get("p25")),
+        p75=optional(row.get("p75")), p90=optional(row.get("p90")),
+        bust_probability=optional(row.get("bust_probability")),
     ) for row in rows)
 
 
