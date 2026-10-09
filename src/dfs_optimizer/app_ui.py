@@ -46,6 +46,9 @@ def apply_app_style() -> None:
 
         .st-key-lineup-studio-topbar {
             position: relative;
+            width: 100%;
+            max-width: 100%;
+            box-sizing: border-box;
             padding: .42rem .5rem;
             margin: 0 0 2.2rem;
             border: 1px solid rgba(210, 210, 215, .68);
@@ -62,6 +65,7 @@ def apply_app_style() -> None:
             background: var(--ls-soft);
             color: var(--ls-primary-dark);
             box-shadow: none;
+            white-space: nowrap;
         }
         .lineup-studio-brand {
             display: flex;
@@ -287,6 +291,12 @@ def apply_app_style() -> None:
             .st-key-lineup-studio-topbar {
                 margin-bottom: 1.65rem;
             }
+            .lineup-studio-brand { gap: 0; }
+            .lineup-studio-brand-name { display: none; }
+            .st-key-lineup-studio-topbar .stButton > button {
+                padding: .35rem .62rem;
+                transform: none;
+            }
             .lineup-studio-step-label { display: none; }
             .lineup-studio-hero { margin-bottom: 1.7rem; }
             .lineup-studio-hero h1 { font-size: 2.8rem; }
@@ -310,6 +320,7 @@ def page_kicker(
     with st.container(
         key="lineup-studio-topbar",
         horizontal=True,
+        wrap=False,
         horizontal_alignment="distribute",
         vertical_alignment="center",
     ):
@@ -317,7 +328,7 @@ def page_kicker(
             """
             <div class="lineup-studio-brand">
                 <span class="lineup-studio-mark">LS</span>
-                LINEUP STUDIO
+                <span class="lineup-studio-brand-name">LINEUP STUDIO</span>
             </div>
             """
         )
