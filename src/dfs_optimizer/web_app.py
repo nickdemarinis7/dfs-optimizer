@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import tempfile
+
 import streamlit as st
 
 from dfs_optimizer.app_ui import apply_app_style
@@ -25,6 +27,7 @@ for key, default in (
     ("lineup_settings", {}),
     ("projection_built_at", None),
     ("salary_content", None),
+    ("salary_loaded_at", None),
     ("run_archive", None),
     ("run_archive_name", None),
     ("saved_run_path", None),
@@ -39,6 +42,11 @@ for key, default in (
     ("saved_calibration_path", None),
 ):
     st.session_state.setdefault(key, default)
+
+# Hosted filesystems are shared by every visitor and may be erased on restart.
+# Give each browser session an isolated temporary run-history directory instead.
+if "run_directory" not in st.session_state:
+    st.session_state["run_directory"] = tempfile.mkdtemp(prefix="dfs-optimizer-runs-")
 
 page = st.navigation(
     [

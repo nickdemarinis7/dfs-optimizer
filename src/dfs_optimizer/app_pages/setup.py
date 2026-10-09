@@ -59,6 +59,7 @@ if slate is None:
             st.session_state["slate"] = slate
             st.session_state["source_name"] = source_name
             st.session_state["salary_content"] = salary_content
+            st.session_state["salary_loaded_at"] = datetime.now(timezone.utc)
             st.rerun()
 
     if st.button("Open a previous run", icon=":material/history_toggle_off:"):
@@ -76,7 +77,7 @@ summary_strip(
 )
 if st.button("Change salary file", icon=":material/swap_horiz:"):
     for key in (
-        "slate", "source_name", "salary_content", "salary-upload",
+        "slate", "source_name", "salary_content", "salary_loaded_at", "salary-upload",
         "projections", "projection_key", "projection_built_at", "ownership_hash", "lineups",
         "lineup_config_key", "run_archive", "run_archive_name", "saved_run_path",
         "current_run_id",

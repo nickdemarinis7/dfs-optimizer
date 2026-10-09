@@ -48,6 +48,7 @@ report = preflight_lineups(
     lineups,
     expected_lineups=int(st.session_state.get("lineup_settings", {}).get("lineups", 3)),
     projection_built_at=st.session_state.get("projection_built_at"),
+    salary_loaded_at=st.session_state.get("salary_loaded_at"),
 )
 audit = report.findings
 stale = (
@@ -208,7 +209,10 @@ with st.container(border=True):
     )
     saved_run_path = st.session_state.get("saved_run_path")
     if saved_run_path:
-        st.caption(f"A local backup was saved to `{saved_run_path}`.")
+        st.caption(
+            "This run is available in Run history for the current browser session. "
+            "Download the complete run package for durable storage."
+        )
 
 action_guide(
     3,

@@ -6,6 +6,7 @@ from typing import Any
 
 from dfs_optimizer.models import Projection, Slate
 from dfs_optimizer.rules import classic_rules_for, single_game_rules_for
+from .risk import suggest_default_excluded_player_ids
 
 from .audit import AuditFinding, audit_lineups
 
@@ -27,6 +28,7 @@ def preflight_lineups(
     *,
     expected_lineups: int | None = None,
     projection_built_at: datetime | None = None,
+    salary_loaded_at: datetime | None = None,
     now: datetime | None = None,
 ) -> PreflightReport:
     """Independently validate the artifacts that will be submitted."""
@@ -115,5 +117,34 @@ def preflight_lineups(
             ))
         else:
             passed.append(f"Projection snapshot is fresh ({age_hours:.1f} hours old)")
+
+    if salary_loaded_at is not None:
+        loaded_at = salary_loaded_at
+        if loaded_at.tzinfo is None:
+            loaded_at = loaded_at.replace(tzinfo=timezone.utc)
+        salary_current_time = now or datetime.now(timezone.utc)
+        salary_age = max(
+            0.0, (salary_current_time - loaded_at).total_seconds() / 3600
+        )
+        if salary_age > 12:
+            findings.append(AuditFinding(
+                "WARNING", "stale_salary_file",
+                f"The salary and player-status file was loaded {salary_age:.1f} hours ago. Reload it before lock to capture current availability.",
+            ))
+        else:
+            passed.append(f"Salary and status file is fresh ({salary_age:.1f} hours old)")
+
+    role_risks = suggest_default_excluded_player_ids(slate, projections)
+    selected_ids = {
+        entry.player.platform_id for lineup in lineups for entry in lineup.entries
+    }
+    players_by_id = {player.platform_id: player for player in slate.players}
+    for player_id in sorted(role_risks & selected_ids):
+        player = players_by_id[player_id]
+        if (player.status or "").strip().upper() not in {"IR", "O", "OUT"}:
+            findings.append(AuditFinding(
+                "WARNING", "backup_quarterback",
+                f"{player.name} appears to be a subordinate same-team quarterback and was manually restored to the player pool.",
+            ))
 
     return PreflightReport(tuple(findings), tuple(passed))

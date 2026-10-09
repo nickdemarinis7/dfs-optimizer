@@ -19,8 +19,8 @@ if slate is not None:
 
 page_kicker(None, "Run history")
 hero(
-    "Every run, preserved.",
-    "Compare early-week and game-day portfolios, reopen any snapshot, and mark the one you actually submitted.",
+    "Runs from this session.",
+    "Compare early-week and game-day portfolios while this browser session is active. Download important snapshots for permanent storage.",
 )
 action_guide(
     1,
@@ -28,7 +28,8 @@ action_guide(
     "Open an earlier portfolio, compare two generations, or mark the exact run you submitted as final.",
 )
 
-records = list_run_records()
+run_directory = st.session_state.get("run_directory", "data/runs")
+records = list_run_records(run_directory)
 if not records:
     st.info("No locally saved runs yet. Your next lineup generation will appear here.")
     if st.button("Back to lineup builder", icon=":material/arrow_back:", width="stretch"):
@@ -66,10 +67,10 @@ with st.container(border=True):
     )
     with st.container(horizontal=True, wrap=True):
         if st.button("Save label", icon=":material/save:"):
-            update_run_label(selected.run_id, new_label)
+            update_run_label(selected.run_id, new_label, run_directory)
             st.rerun()
         if st.button("Mark as submitted", icon=":material/check_circle:", disabled=selected.is_final):
-            mark_run_final(selected)
+            mark_run_final(selected, run_directory)
             st.rerun()
     st.download_button(
         "Download snapshot",
@@ -88,6 +89,7 @@ with st.container(border=True):
             st.session_state["slate"] = loaded_slate
             st.session_state["source_name"] = loaded_slate.source_name
             st.session_state["salary_content"] = salary_content
+            st.session_state["salary_loaded_at"] = selected.created_at
             st.session_state["projections"] = projections
             st.session_state["lineups"] = lineups
             st.session_state["lineup_settings"] = settings

@@ -96,6 +96,8 @@ if slate.contest_format == ContestFormat.CLASSIC:
     require_bring_back = True
 else:
     maximum_multiplier_exposure = .34
+    maximum_players_per_team = 4
+    maximum_kickers_and_defenses = 1
 
 customize_strategy = st.toggle(
     "Customize strategy",
@@ -153,6 +155,16 @@ if customize_strategy:
                 "Maximum MVP/Captain exposure (%)", 5, 100, 34, 5,
                 key="build-multiplier-exposure",
             )) / 100
+            maximum_players_per_team = int(st.number_input(
+                "Maximum players from one team", 3, 5, 4,
+                key="build-maximum-team-players",
+                help="Four is balanced. Five permits aggressive 5–1 game scripts.",
+            ))
+            maximum_kickers_and_defenses = int(st.number_input(
+                "Maximum kickers and defenses", 0, 3, 1,
+                key="build-maximum-kicker-defense",
+                help="Raise this to test low-scoring or double-kicker constructions.",
+            ))
 
         if slate.contest_format == ContestFormat.CLASSIC:
             locked = st.multiselect(
@@ -347,7 +359,8 @@ if st.button(
                     # 19.88 multiplied ceiling, yet a winning Captain outcome.
                     minimum_multiplier_ceiling=18, minimum_quarterbacks=1,
                     minimum_quarterback_projection=5, minimum_player_projection=.1,
-                    maximum_players_per_team=4, maximum_kickers_and_defenses=1,
+                    maximum_players_per_team=maximum_players_per_team,
+                    maximum_kickers_and_defenses=maximum_kickers_and_defenses,
                     maximum_dst_opponents=1, require_multiplier_receiver_qb=True,
                     ceiling_weight=.3, excluded_player_ids=excluded_ids,
                     limited_player_ids=limited_ids,
@@ -357,6 +370,8 @@ if st.button(
                     lineup_count == 3 and minimum_unique == 2
                     and maximum_player_exposure == .67
                     and maximum_multiplier_exposure == .34 and include_ceiling_lineup
+                    and maximum_players_per_team == 4
+                    and maximum_kickers_and_defenses == 1
                 )
                 if use_tuned_3max:
                     try:
@@ -440,14 +455,40 @@ if st.button(
                 )
             status.update(label="Portfolio ready", state="complete", expanded=False)
         lineup_settings = {
+            "strategy_version": "tournament-defaults-v2",
             "portfolio_mode": portfolio_label, "lineups": lineup_count,
             "minimum_unique_players": minimum_unique,
             "maximum_player_exposure": effective_player_exposure,
+            "locked_players": tuple(sorted(players[player_id].name for player_id in locked_ids)),
+            "excluded_players": tuple(sorted(players[player_id].name for player_id in excluded_ids)),
+            "automatic_exclusion_suggestions": tuple(sorted(
+                players[player_id].name for player_id in suggested_excluded
+            )),
             "maximum_once_players": tuple(sorted(
                 players[player_id].name for player_id in effective_limited_ids
             )),
             "ceiling_lineup_number": lineup_count if include_ceiling_lineup else None,
+            "ownership_coverage": ownership_coverage,
+            "ownership_penalty": .05 if ownership_coverage >= .75 else 0,
+            "constraints_relaxed": bool(generation_warning),
         }
+        if slate.contest_format == ContestFormat.CLASSIC:
+            lineup_settings.update({
+                "maximum_qb_exposure": maximum_qb_exposure,
+                "maximum_dst_exposure": maximum_dst_exposure,
+                "require_qb_stack": require_qb_stack,
+                "require_opponent_bring_back": require_bring_back,
+                "minimum_stack_projection": 7 if require_qb_stack else 0,
+                "minimum_bring_back_projection": 7 if require_qb_stack and require_bring_back else 0,
+            })
+        else:
+            lineup_settings.update({
+                "maximum_multiplier_exposure": maximum_multiplier_exposure,
+                "maximum_players_per_team": maximum_players_per_team,
+                "maximum_kickers_and_defenses": maximum_kickers_and_defenses,
+                "minimum_multiplier_ceiling": 18,
+                "minimum_quarterbacks": 1,
+            })
         scenario_analysis = simulate_lineups(lineups)
         lineup_settings["scenario_analysis"] = [
             {
@@ -483,7 +524,9 @@ if st.button(
         saved_run_path = None
         try:
             saved_run_path = save_run_archive(
-                run_archive, slate, created_at=created_at, run_id=run_id
+                run_archive, slate,
+                directory=st.session_state["run_directory"],
+                created_at=created_at, run_id=run_id,
             )
         except OSError:
             # Hosted Streamlit filesystems may be ephemeral or read-only. The
