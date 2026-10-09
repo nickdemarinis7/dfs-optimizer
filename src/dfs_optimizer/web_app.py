@@ -31,6 +31,12 @@ for key, default in (
     ("current_run_id", None),
     ("generation_warning", None),
     ("scenario_analysis", ()),
+    ("submission_snapshot_key", None),
+    ("submission_snapshot", None),
+    ("saved_submission_path", None),
+    ("calibration_record_key", None),
+    ("calibration_record", None),
+    ("saved_calibration_path", None),
 ):
     st.session_state.setdefault(key, default)
 

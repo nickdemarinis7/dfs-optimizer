@@ -35,6 +35,12 @@ overlap, and mark the snapshot that was actually submitted. Marking a newer run
 as submitted replaces the final marker only for that slate; it does not delete
 or modify the earlier archive.
 
+After uploading entries to DraftKings or FanDuel, use **Capture final
+submission** on Results to re-import the completed platform CSV. The app
+compares it slot-for-slot with the generated portfolio and creates a timestamped
+JSON snapshot. This preserves late swaps and manual changes as the authoritative
+pre-lock record without modifying the original run archive.
+
 ## Deploy to Streamlit Community Cloud
 
 The repository is ready for Streamlit Community Cloud. Create an app from this
@@ -291,6 +297,12 @@ recent outcomes at or below half the current median projection (with a two-point
 minimum threshold). The Backtest screen extracts unmultiplied player outcomes
 from final standings and reports MAE, RMSE, bias, correlation, interval coverage,
 position-level error, and the largest individual misses.
+
+Each completed Backtest also creates a downloadable calibration record and, on
+a writable local deployment, stores it under `data/calibration/`. The history
+table aggregates model error, interval coverage, and best submitted finish
+across slates. Hosted filesystems may be temporary, so download both submission
+and calibration JSON files when using Streamlit Community Cloud.
 
 Joint 3-max selection runs deterministic correlated simulations over those
 distributions. Shared game, team, passing, and rushing factors move related

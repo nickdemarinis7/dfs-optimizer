@@ -72,6 +72,8 @@ if st.session_state.get("slate") != slate:
         "current_run_id",
         "generation_warning",
         "scenario_analysis",
+        "submission_snapshot_key", "submission_snapshot", "saved_submission_path",
+        "calibration_record_key", "calibration_record", "saved_calibration_path",
     ):
         st.session_state.pop(key, None)
 st.session_state["slate"] = slate

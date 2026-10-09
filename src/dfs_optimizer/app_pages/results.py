@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import hashlib
 
 import pandas as pd
 import streamlit as st
@@ -11,6 +12,12 @@ from dfs_optimizer.services.portfolio import analyze_portfolio
 from dfs_optimizer.services.preflight import preflight_lineups
 from dfs_optimizer.services.run_archive import build_run_archive
 from dfs_optimizer.services.scenarios import simulate_lineups
+from dfs_optimizer.services.submissions import (
+    compare_submitted_rosters,
+    import_submitted_rosters,
+    save_submission_snapshot,
+    submission_snapshot_bytes,
+)
 
 
 slate = st.session_state.get("slate")
@@ -164,6 +171,68 @@ with st.expander("Download entries", icon=":material/download:", expanded=True):
     saved_run_path = st.session_state.get("saved_run_path")
     if saved_run_path:
         st.caption(f"A local backup was saved to `{saved_run_path}`.")
+
+with st.expander("Capture final submission", icon=":material/verified:"):
+    st.caption(
+        "After uploading entries to the platform, add that completed CSV here. "
+        "This becomes the pre-lock source of truth and is compared with this generated run."
+    )
+    submitted_file = st.file_uploader(
+        "Completed platform entry CSV",
+        type="csv",
+        key="final-submission-file",
+    )
+    if submitted_file is not None:
+        try:
+            submitted_content = submitted_file.getvalue()
+            submitted_rosters = import_submitted_rosters(submitted_content, slate)
+            submission_comparison = compare_submitted_rosters(submitted_rosters, lineups)
+            content_hash = hashlib.sha256(submitted_content).hexdigest()
+            run_id = st.session_state.get("current_run_id") or f"submission-{content_hash[:12]}"
+            snapshot_key = (run_id, content_hash)
+            if st.session_state.get("submission_snapshot_key") != snapshot_key:
+                snapshot = submission_snapshot_bytes(
+                    run_id, slate, submitted_rosters, submission_comparison
+                )
+                saved_submission_path = None
+                try:
+                    saved_submission_path = save_submission_snapshot(snapshot, run_id)
+                except OSError:
+                    pass
+                st.session_state["submission_snapshot_key"] = snapshot_key
+                st.session_state["submission_snapshot"] = snapshot
+                st.session_state["saved_submission_path"] = (
+                    str(saved_submission_path) if saved_submission_path else None
+                )
+            comparison_metrics = st.columns(3)
+            comparison_metrics[0].metric("Submitted", submission_comparison.submitted_count)
+            comparison_metrics[1].metric("Exact matches", submission_comparison.exact_matches)
+            comparison_metrics[2].metric("Changed", submission_comparison.changed_count)
+            st.dataframe(
+                pd.DataFrame([
+                    {"Entry": roster.lineup_number, "Final roster": roster.display}
+                    for roster in submitted_rosters
+                ]),
+                hide_index=True,
+                width="stretch",
+            )
+            if submission_comparison.changed_count:
+                st.warning(
+                    "The final submission differs from the generated portfolio. "
+                    "The captured snapshot will be used as the authoritative pre-lock record."
+                )
+            else:
+                st.success("The final submission exactly matches the generated portfolio.")
+            st.download_button(
+                "Download submission snapshot",
+                st.session_state["submission_snapshot"],
+                f"{run_id}-submission.json",
+                "application/json",
+                icon=":material/download:",
+                width="stretch",
+            )
+        except (UnicodeError, ValueError) as exc:
+            st.error(str(exc))
 
 if st.button("Review contest results", icon=":material/history:", width="stretch"):
     st.switch_page("app_pages/backtest.py")

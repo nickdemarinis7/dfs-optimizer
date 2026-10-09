@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import pandas as pd
 import streamlit as st
 
@@ -12,6 +14,12 @@ from dfs_optimizer.backtesting import (
 from dfs_optimizer.services.results_review import (
     extract_submitted_entries,
     review_contest_results,
+)
+from dfs_optimizer.services.calibration import (
+    calibration_record,
+    calibration_record_bytes,
+    list_calibration_records,
+    save_calibration_record,
 )
 
 
@@ -60,6 +68,7 @@ if results_file is not None:
     except ValueError as exc:
         st.error(str(exc), icon=":material/error:")
     else:
+        submitted = ()
         metrics = st.columns(3)
         metrics[0].metric("Field", f"{review.field_size:,}")
         metrics[1].metric("Winning score", f"{review.winning_score:.2f}")
@@ -194,6 +203,67 @@ if results_file is not None:
                 hide_index=True,
                 width="stretch",
             )
+            result_hash = hashlib.sha256(results_file.getvalue()).hexdigest()
+            run_id = st.session_state.get("current_run_id") or f"results-{result_hash[:12]}"
+            record = calibration_record(
+                run_id,
+                slate,
+                projection_metrics,
+                evaluation_rows,
+                review.field_size,
+                review.winning_score,
+                submitted,
+            )
+            record_key = (run_id, result_hash, entry_filter.strip().casefold())
+            if st.session_state.get("calibration_record_key") != record_key:
+                saved_calibration_path = None
+                try:
+                    saved_calibration_path = save_calibration_record(record)
+                except OSError:
+                    pass
+                st.session_state["calibration_record_key"] = record_key
+                st.session_state["calibration_record"] = record
+                st.session_state["saved_calibration_path"] = (
+                    str(saved_calibration_path) if saved_calibration_path else None
+                )
+            st.download_button(
+                "Download calibration record",
+                calibration_record_bytes(st.session_state["calibration_record"]),
+                f"{run_id}-calibration.json",
+                "application/json",
+                icon=":material/download:",
+                width="stretch",
+            )
+
+records = list_calibration_records()
+if records:
+    with st.expander("Calibration history", icon=":material/monitoring:"):
+        history = pd.DataFrame([
+            {
+                "Run": item["run_id"],
+                "Platform": item["platform"],
+                "Format": item["contest_format"].replace("_", " ").title(),
+                "Players": item["projection_metrics"]["matched_players"],
+                "MAE": item["projection_metrics"]["mae"],
+                "Bias": item["projection_metrics"]["bias"],
+                "Correlation": item["projection_metrics"]["correlation"],
+                "Coverage": item["projection_metrics"]["interval_coverage"],
+                "Best top %": item.get("best_top_percent"),
+            }
+            for item in records
+        ])
+        st.dataframe(
+            history,
+            column_config={
+                "MAE": st.column_config.NumberColumn(format="%.2f"),
+                "Bias": st.column_config.NumberColumn(format="%+.2f"),
+                "Correlation": st.column_config.NumberColumn(format="%.2f"),
+                "Coverage": st.column_config.NumberColumn(format="percent"),
+                "Best top %": st.column_config.NumberColumn(format="%.2f%%"),
+            },
+            hide_index=True,
+            width="stretch",
+        )
 
 if st.button("Back to results", icon=":material/arrow_back:", width="stretch"):
     st.switch_page("app_pages/results.py")
