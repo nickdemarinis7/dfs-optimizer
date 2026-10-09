@@ -20,7 +20,7 @@ from dfs_optimizer.services.projections import (
     download_historical_data,
     historical_data_paths,
 )
-from dfs_optimizer.services.slates import discover_salary_files, infer_slate_period, load_uploaded_salary_file
+from dfs_optimizer.services.slates import infer_slate_period, load_uploaded_salary_file
 
 
 FORECAST_MODEL_VERSION = "outcome-distributions-v5"
@@ -53,34 +53,8 @@ if upload:
     except (OSError, ValueError) as exc:
         st.error(str(exc))
 
-optional_label("Already started?")
-with st.container(border=True):
-    section_intro(
-        "Open something you saved",
-        "Use this only if you already have a salary file in the project or want to reopen an earlier lineup run.",
-        icon=":material/folder_open:",
-    )
-    folder = st.text_input(
-        "Salary-file folder",
-        value="samples",
-        help="The project folder where previously downloaded salary CSV files are stored.",
-    )
-    discovered = discover_salary_files(folder)
-    if discovered:
-        labels = [f"{path.name} — {item.platform.value} / {item.contest_format.value}" for path, item in discovered]
-        selected = st.selectbox(
-            "Saved salary file", range(len(labels)), index=None,
-            placeholder="Choose a saved file", format_func=lambda i: labels[i],
-            help="Selecting a file loads it just like a new upload.",
-        )
-        if selected is not None and upload is None:
-            path, slate = discovered[selected]
-            source_name = path.name
-            salary_content = path.read_bytes()
-    else:
-        st.caption("No recognized salary CSV files were found in this folder.")
-    if st.button("View run history", icon=":material/history_toggle_off:"):
-        st.switch_page("app_pages/run_history.py")
+if st.button("Open a previous run", icon=":material/history_toggle_off:"):
+    st.switch_page("app_pages/run_history.py")
 
 if slate is None:
     st.caption("After upload, this screen will confirm your slate and show one button to continue.")
@@ -132,12 +106,6 @@ with st.container(border=True):
         width="stretch",
         help="Historical forecast uses prior NFL performance. Salary-file average uses the fantasy points supplied by the contest site.",
     )
-    if method == "Historical forecast":
-        cache_dir = st.text_input(
-            "Historical data folder",
-            value="data/cache",
-            help="Where downloaded NFL history is cached. Most users should leave this unchanged.",
-        )
 
 if method == "Salary-file average":
     projections = build_platform_average_projections(slate)
