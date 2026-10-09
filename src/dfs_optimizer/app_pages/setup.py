@@ -26,7 +26,7 @@ from dfs_optimizer.services.slates import infer_slate_period, load_uploaded_sala
 FORECAST_MODEL_VERSION = "outcome-distributions-v5"
 
 
-@st.cache_data(max_entries=8)
+@st.cache_data(max_entries=8, show_spinner=False)
 def _forecast(slate, season: int, week: int, cache_dir: str, model_version: str):
     return build_historical_projections(slate, season, week, cache_dir)
 
