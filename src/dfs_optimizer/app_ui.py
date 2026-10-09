@@ -367,6 +367,12 @@ def optional_label(label: str = "Optional") -> None:
     st.html(f'<div class="lineup-studio-section-label">{escape(label)}</div>')
 
 
+def section_intro(title: str, detail: str, *, icon: str | None = None) -> None:
+    """Introduce a visible section in plain language."""
+    st.subheader(title, icon=icon)
+    st.caption(detail)
+
+
 def summary_strip(title: str, detail: str) -> None:
     st.html(
         f"""

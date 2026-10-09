@@ -6,7 +6,14 @@ import hashlib
 import pandas as pd
 import streamlit as st
 
-from dfs_optimizer.app_ui import action_guide, apply_platform_theme, hero, optional_label, page_kicker
+from dfs_optimizer.app_ui import (
+    action_guide,
+    apply_platform_theme,
+    hero,
+    optional_label,
+    page_kicker,
+    section_intro,
+)
 from dfs_optimizer.exporters import lineups_csv_text, merge_lineups_into_template
 from dfs_optimizer.services.portfolio import analyze_portfolio
 from dfs_optimizer.services.preflight import preflight_lineups
@@ -109,13 +116,23 @@ with st.container(border=True):
     } for entry in lineup.entries]), width="stretch", hide_index=True)
 
 optional_label("Deeper analysis")
-with st.expander("Portfolio exposure", icon=":material/donut_large:"):
+with st.container(border=True):
+    section_intro(
+        "Portfolio exposure",
+        "Exposure shows how often each player appears across your entries. High exposure means more risk is concentrated in that player.",
+        icon=":material/donut_large:",
+    )
     for warning in diagnostics.warnings:
         st.warning(warning)
     counts = Counter(e.player.name for lineup in lineups for e in lineup.entries)
     st.dataframe(pd.DataFrame([{"Player": name, "Appearances": count, "Exposure": 100 * count / len(lineups)} for name, count in counts.most_common()]), width="stretch", hide_index=True)
 
-with st.expander("Game scripts", icon=":material/casino:"):
+with st.container(border=True):
+    section_intro(
+        "Simulated game scripts",
+        "These simulations estimate upside and how often each lineup leads your portfolio; they are ranges, not guarantees.",
+        icon=":material/casino:",
+    )
     st.caption(
         "Two thousand correlated simulations using shared game, team, passing, and rushing factors."
     )
@@ -141,7 +158,12 @@ with st.expander("Game scripts", icon=":material/casino:"):
         width="stretch",
     )
 
-with st.expander("Pre-submit audit", icon=":material/fact_check:", expanded=blocking):
+with st.container(border=True):
+    section_intro(
+        "Pre-submit check",
+        "Resolve any blocking issue before downloading. Informational notes do not prevent export.",
+        icon=":material/fact_check:",
+    )
     if audit:
         st.dataframe(pd.DataFrame([{"Severity": x.severity, "Check": x.code, "Details": x.message} for x in audit]), width="stretch", hide_index=True)
     else:
@@ -152,7 +174,12 @@ action_guide(
     "Download and submit",
     "Download the lineup CSV below, then upload it on DraftKings or FanDuel. A blocking warning disables downloads until it is fixed.",
 )
-with st.expander("Download entries", icon=":material/download:", expanded=True):
+with st.container(border=True):
+    section_intro(
+        "Entry files",
+        "The basic CSV lists your lineups. The official-template option is best when the contest site provides an entry-edit file.",
+        icon=":material/download:",
+    )
     st.download_button("Download lineup CSV", lineups_csv_text(lineups, slate.platform).encode(), "lineups.csv", "text/csv", disabled=blocking, icon=":material/download:", width="stretch")
     template = st.file_uploader("Official contest-entry template (optional)", type="csv")
     if template:
@@ -188,7 +215,12 @@ action_guide(
     "Save what you actually entered",
     "After submitting on the contest site, upload the completed entry CSV here so later results are matched to the real rosters.",
 )
-with st.expander("Capture final submission", icon=":material/verified:"):
+with st.container(border=True):
+    section_intro(
+        "Final submission record",
+        "This is optional but recommended. It preserves what you actually entered, including any last-minute swaps made on the contest site.",
+        icon=":material/verified:",
+    )
     st.caption(
         "After uploading entries to the platform, add that completed CSV here. "
         "This becomes the pre-lock source of truth and is compared with this generated run."

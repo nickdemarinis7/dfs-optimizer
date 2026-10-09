@@ -11,6 +11,7 @@ from dfs_optimizer.app_ui import (
     hero,
     optional_label,
     page_kicker,
+    section_intro,
     summary_strip,
 )
 from dfs_optimizer.projections import build_platform_average_projections
@@ -53,23 +54,32 @@ if upload:
         st.error(str(exc))
 
 optional_label("Already started?")
-with st.container(horizontal=True, wrap=True):
-    with st.popover("Saved slates", icon=":material/folder:"):
-        folder = st.text_input("Import folder", value="samples")
-        discovered = discover_salary_files(folder)
-        if discovered:
-            labels = [f"{path.name} — {item.platform.value} / {item.contest_format.value}" for path, item in discovered]
-            selected = st.selectbox(
-                "Saved salary files", range(len(labels)), index=None,
-                placeholder="Choose a file", format_func=lambda i: labels[i],
-            )
-            if selected is not None and upload is None:
-                path, slate = discovered[selected]
-                source_name = path.name
-                salary_content = path.read_bytes()
-        else:
-            st.caption("No recognized salary CSV files found in this folder.")
-    if st.button("Run history", icon=":material/history_toggle_off:"):
+with st.container(border=True):
+    section_intro(
+        "Open something you saved",
+        "Use this only if you already have a salary file in the project or want to reopen an earlier lineup run.",
+        icon=":material/folder_open:",
+    )
+    folder = st.text_input(
+        "Salary-file folder",
+        value="samples",
+        help="The project folder where previously downloaded salary CSV files are stored.",
+    )
+    discovered = discover_salary_files(folder)
+    if discovered:
+        labels = [f"{path.name} — {item.platform.value} / {item.contest_format.value}" for path, item in discovered]
+        selected = st.selectbox(
+            "Saved salary file", range(len(labels)), index=None,
+            placeholder="Choose a saved file", format_func=lambda i: labels[i],
+            help="Selecting a file loads it just like a new upload.",
+        )
+        if selected is not None and upload is None:
+            path, slate = discovered[selected]
+            source_name = path.name
+            salary_content = path.read_bytes()
+    else:
+        st.caption("No recognized salary CSV files were found in this folder.")
+    if st.button("View run history", icon=":material/history_toggle_off:"):
         st.switch_page("app_pages/run_history.py")
 
 if slate is None:
@@ -109,13 +119,25 @@ action_guide(
 method = "Historical forecast"
 cache_dir = "data/cache"
 optional_label("Advanced projection options")
-with st.container(horizontal=True):
-    with st.popover("Change projection model", icon=":material/tune:"):
-        method = st.selectbox(
-            "Projection method", ("Historical forecast", "Salary-file average")
+with st.container(border=True):
+    section_intro(
+        "Projection model",
+        "Historical forecast is recommended. Salary-file average is a fallback when historical data is unavailable.",
+        icon=":material/auto_awesome:",
+    )
+    method = st.segmented_control(
+        "Choose a projection method",
+        ("Historical forecast", "Salary-file average"),
+        default="Historical forecast",
+        width="stretch",
+        help="Historical forecast uses prior NFL performance. Salary-file average uses the fantasy points supplied by the contest site.",
+    )
+    if method == "Historical forecast":
+        cache_dir = st.text_input(
+            "Historical data folder",
+            value="data/cache",
+            help="Where downloaded NFL history is cached. Most users should leave this unchanged.",
         )
-        if method == "Historical forecast":
-            cache_dir = st.text_input("Historical data folder", value="data/cache")
 
 if method == "Salary-file average":
     projections = build_platform_average_projections(slate)
@@ -131,14 +153,19 @@ else:
     if inferred:
         season, week, matched, total = inferred
         st.caption(f"Ready to build · {season} Week {week} detected")
-        with st.popover("Week & refresh", icon=":material/calendar_month:"):
+        with st.container(border=True):
+            section_intro(
+                "Detected slate week",
+                "Confirm this before building. Refresh data after completed games or major Sunday updates.",
+                icon=":material/calendar_month:",
+            )
             controls = st.columns(2)
             season = int(controls[0].number_input("Season", 2000, 2100, season))
             week = int(controls[1].number_input("Week", 1, 22, week))
             paths = historical_data_paths(season, cache_dir)
             refresh = st.toggle(
                 "Refresh historical data", value=bool(paths.missing),
-                help="Turn this on after new games are completed.",
+                help="Downloads the newest completed-game history before projections are built.",
             )
     else:
         st.caption("Choose the week because it could not be detected from the salary file.")

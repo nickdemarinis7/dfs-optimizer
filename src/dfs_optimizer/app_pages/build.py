@@ -14,6 +14,7 @@ from dfs_optimizer.app_ui import (
     hero,
     optional_label,
     page_kicker,
+    section_intro,
     summary_strip,
 )
 from dfs_optimizer.importers import match_projections
@@ -61,11 +62,17 @@ action_guide(
     "Use the status and signal tables below. Exclude anyone who is out or who you do not want in a lineup.",
 )
 optional_label("Optional controls")
-with st.popover("Adjust lineup settings", icon=":material/tune:", width="stretch"):
+with st.container(border=True):
+    section_intro(
+        "Portfolio settings",
+        "These defaults target a three-entry tournament. Change them only when your contest or risk preference is different.",
+        icon=":material/tune:",
+    )
     st.caption("The defaults are tuned for a three-entry tournament portfolio.")
     lineup_count = int(st.number_input(
         "Number of lineups", min_value=1, max_value=20, value=3, step=1,
         key=f"build-lineup-count-{slate.contest_format.value}",
+        help="The number of separate contest entries you want the optimizer to create.",
     ))
     minimum_unique = int(st.number_input(
         "Minimum unique players", min_value=1,
@@ -82,6 +89,7 @@ with st.popover("Adjust lineup settings", icon=":material/tune:", width="stretch
     include_ceiling_lineup = st.toggle(
         "Make the final lineup ceiling-focused", value=True,
         key=f"build-ceiling-lineup-{slate.contest_format.value}",
+        help="Builds the final entry around upside instead of median projection. Recommended for tournaments.",
     )
     run_label = st.text_input(
         "Run label (optional)",
@@ -93,20 +101,27 @@ with st.popover("Adjust lineup settings", icon=":material/tune:", width="stretch
         maximum_qb_exposure = int(st.number_input(
             "Maximum QB exposure (%)", min_value=5, max_value=100, value=67, step=5,
             key="build-qb-exposure",
+            help="Limits how many lineups can use the same quarterback.",
         )) / 100
         maximum_dst_exposure = int(st.number_input(
             "Maximum defense exposure (%)", min_value=5, max_value=100, value=34, step=5,
             key="build-dst-exposure",
+            help="Limits how many lineups can use the same defense.",
         )) / 100
-        require_qb_stack = st.toggle("Require a QB stack", value=True, key="build-qb-stack")
+        require_qb_stack = st.toggle(
+            "Require a QB stack", value=True, key="build-qb-stack",
+            help="Pairs each quarterback with at least one of his receivers to capture correlated scoring.",
+        )
         require_bring_back = st.toggle(
             "Require an opponent bring-back", value=True, disabled=not require_qb_stack,
             key="build-bring-back",
+            help="Adds an opponent from the same game, targeting a competitive high-scoring game script.",
         )
     else:
         maximum_multiplier_exposure = int(st.number_input(
             "Maximum MVP/Captain exposure (%)", min_value=5, max_value=100, value=34, step=5,
             key="build-multiplier-exposure",
+            help="Limits how often one player can occupy the boosted MVP or Captain slot.",
         )) / 100
 
 portfolio_label = "3-max tournament" if lineup_count == 3 else f"{lineup_count}-lineup portfolio"
@@ -119,12 +134,21 @@ players = {p.platform_id: p for p in slate.players if p.platform_id in projectio
 suggested_max_once = suggest_max_once_player_ids(slate, tuple(projections)) & players.keys()
 label = lambda pid: f"{players[pid].name} — {players[pid].team} {players[pid].primary_position.value}"
 locked = []
-with st.container(horizontal=True, wrap=True):
-    with st.popover("Player moves", icon=":material/person_edit:"):
+with st.container(border=True):
+    section_intro(
+        "Your player decisions",
+        "You can leave these alone. Use them when injury news or your own research changes who should enter the optimizer.",
+        icon=":material/person_edit:",
+    )
+    with st.container():
         if slate.contest_format == ContestFormat.CLASSIC:
-            locked = st.multiselect("Lock", tuple(players), format_func=label, key=f"build-locks-{hash(slate)}")
+            locked = st.multiselect(
+                "Lock into every lineup", tuple(players), format_func=label,
+                key=f"build-locks-{hash(slate)}",
+                help="Forces a player into every generated lineup. Use sparingly.",
+            )
         excluded = st.multiselect(
-            "Exclude", tuple(pid for pid in players if pid not in locked), format_func=label,
+            "Exclude completely", tuple(pid for pid in players if pid not in locked), format_func=label,
             key=f"build-exclusions-{hash(slate)}",
             help="Remove inactive players, backups, or anyone you do not want.",
         )
@@ -139,7 +163,14 @@ with st.container(horizontal=True, wrap=True):
             key=f"build-max-once-{hash(slate)}",
             help="Fragile values can appear in at most one lineup. Low-floor suggestions are selected automatically.",
         )
-    with st.popover("Ownership", icon=":material/add_chart:"):
+
+with st.container(border=True):
+    section_intro(
+        "Ownership projections",
+        "Optional: add projected roster percentages to help the optimizer avoid overly popular combinations.",
+        icon=":material/add_chart:",
+    )
+    with st.container():
         ownership = st.file_uploader("Projected ownership CSV", type="csv")
         if ownership:
             content = ownership.getvalue()
