@@ -58,11 +58,16 @@ if slate is None or not projections:
     st.stop()
 
 projection_by_id = {item.platform_id: item for item in projections}
+player_context = tuple(st.session_state.get("player_context", ()))
+context_by_id = {item.platform_id: item for item in player_context}
 default_unique = 3 if slate.contest_format == ContestFormat.CLASSIC else 2
 players = {p.platform_id: p for p in slate.players if p.platform_id in projection_by_id}
-suggested_max_once = suggest_max_once_player_ids(slate, tuple(projections)) & players.keys()
+suggested_max_once = suggest_max_once_player_ids(
+    slate, tuple(projections), player_context
+) & players.keys()
 suggested_excluded = (
-    suggest_default_excluded_player_ids(slate, tuple(projections)) & players.keys()
+    suggest_default_excluded_player_ids(slate, tuple(projections), player_context)
+    & players.keys()
 )
 label = lambda pid: f"{players[pid].name} — {players[pid].team} {players[pid].primary_position.value}"
 action_guide(
@@ -70,6 +75,16 @@ action_guide(
     "Review flagged players",
     "Check the player table, then exclude anyone who is out or who you do not trust.",
 )
+if player_context:
+    st.caption(
+        f"Current role check matched {len(player_context)} of {len(players)} players · "
+        "depth-chart and injury signals are active"
+    )
+elif st.session_state.get("player_context_error"):
+    st.warning(
+        "Current role data could not be refreshed. Historical safeguards are still active; review backups manually.",
+        icon=":material/cloud_off:",
+    )
 
 with st.container(border=True):
     section_intro(
@@ -238,6 +253,7 @@ for player in players.values():
             if projection.bust_probability is not None else None
         ),
         "Status": (player.status or "Available").upper(),
+        "Role": context_by_id[player.platform_id].role_label if player.platform_id in context_by_id else "—",
     })
 
 st.caption(f"{len(pool_rows)} players · switch the status filter to explore the slate")
@@ -464,6 +480,19 @@ if st.button(
             "automatic_exclusion_suggestions": tuple(sorted(
                 players[player_id].name for player_id in suggested_excluded
             )),
+            "player_context_coverage": len(player_context) / max(1, len(players)),
+            "player_context_source": "Sleeper daily player map" if player_context else None,
+            "player_context": tuple(
+                {
+                    "player": players[item.platform_id].name,
+                    "depth_chart_position": item.depth_chart_position,
+                    "injury_status": item.injury_status,
+                    "practice_participation": item.practice_participation,
+                    "active": item.active,
+                }
+                for item in player_context
+                if item.platform_id in players
+            ),
             "maximum_once_players": tuple(sorted(
                 players[player_id].name for player_id in effective_limited_ids
             )),

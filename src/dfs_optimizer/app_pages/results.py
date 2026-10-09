@@ -49,6 +49,7 @@ report = preflight_lineups(
     expected_lineups=int(st.session_state.get("lineup_settings", {}).get("lineups", 3)),
     projection_built_at=st.session_state.get("projection_built_at"),
     salary_loaded_at=st.session_state.get("salary_loaded_at"),
+    player_context=tuple(st.session_state.get("player_context", ())),
 )
 audit = report.findings
 stale = (

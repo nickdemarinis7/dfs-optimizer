@@ -6,6 +6,7 @@ from .projections import (
     historical_data_paths,
 )
 from .risk import suggest_default_excluded_player_ids, suggest_max_once_player_ids
+from .player_context import PlayerContext, fetch_player_context, match_player_context
 from .results_review import (
     ResultsReview,
     ReviewedLineup,
@@ -40,6 +41,9 @@ __all__ = [
     "build_historical_projections",
     "suggest_max_once_player_ids",
     "suggest_default_excluded_player_ids",
+    "PlayerContext",
+    "fetch_player_context",
+    "match_player_context",
     "ResultsReview",
     "ReviewedLineup",
     "SubmittedEntry",

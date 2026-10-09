@@ -20,6 +20,7 @@ from dfs_optimizer.services.projections import (
     download_historical_data,
     historical_data_paths,
 )
+from dfs_optimizer.services.player_context import fetch_player_context
 from dfs_optimizer.services.slates import infer_slate_period, load_uploaded_salary_file
 
 
@@ -29,6 +30,11 @@ FORECAST_MODEL_VERSION = "outcome-distributions-v5"
 @st.cache_data(max_entries=8, show_spinner=False)
 def _forecast(slate, season: int, week: int, cache_dir: str, model_version: str):
     return build_historical_projections(slate, season, week, cache_dir)
+
+
+@st.cache_data(ttl=12 * 3600, max_entries=8, show_spinner=False)
+def _current_player_context(slate, cache_dir: str):
+    return fetch_player_context(slate, cache_dir)
 
 
 page_kicker(1, "Set up", home=False)
@@ -78,7 +84,9 @@ summary_strip(
 if st.button("Change salary file", icon=":material/swap_horiz:"):
     for key in (
         "slate", "source_name", "salary_content", "salary_loaded_at", "salary-upload",
-        "projections", "projection_key", "projection_built_at", "ownership_hash", "lineups",
+        "projections", "projection_key", "projection_built_at", "player_context",
+        "player_context_error", "player_context_built_at", "player_context_attempted",
+        "ownership_hash", "lineups",
         "lineup_config_key", "run_archive", "run_archive_name", "saved_run_path",
         "current_run_id",
         "generation_warning",
@@ -119,6 +127,14 @@ if method == "Salary-file average":
         st.session_state["projection_built_at"] = datetime.now(timezone.utc)
     st.session_state["projections"] = projections
     st.session_state["projection_key"] = projection_key
+    if not st.session_state.get("player_context_attempted"):
+        st.session_state["player_context_attempted"] = True
+        try:
+            st.session_state["player_context"] = _current_player_context(slate, cache_dir)
+            st.session_state["player_context_error"] = None
+            st.session_state["player_context_built_at"] = datetime.now(timezone.utc)
+        except (OSError, ValueError) as exc:
+            st.session_state["player_context_error"] = str(exc)
     st.caption("Salary-file averages are a fallback and are not forward-looking weekly projections.")
 else:
     inferred = infer_slate_period(slate, Path(cache_dir).expanduser() / "games.csv")
@@ -166,6 +182,16 @@ else:
                 projections = _forecast(
                     slate, season, week, cache_dir, FORECAST_MODEL_VERSION
                 )
+                status.write("Checking current injuries and depth charts")
+                try:
+                    st.session_state["player_context_attempted"] = True
+                    player_context = _current_player_context(slate, cache_dir)
+                    st.session_state["player_context"] = player_context
+                    st.session_state["player_context_error"] = None
+                    st.session_state["player_context_built_at"] = datetime.now(timezone.utc)
+                except (OSError, ValueError) as exc:
+                    st.session_state["player_context"] = ()
+                    st.session_state["player_context_error"] = str(exc)
                 status.update(label="Projections ready", state="complete", expanded=False)
             st.session_state["projections"] = projections
             st.session_state["projection_key"] = projection_key

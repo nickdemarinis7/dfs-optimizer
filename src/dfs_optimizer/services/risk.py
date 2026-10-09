@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dfs_optimizer.models import Position, Projection, Slate
+from .player_context import PlayerContext
 
 
 UNAVAILABLE_STATUSES = frozenset({"IR", "O", "OUT"})
@@ -9,6 +10,7 @@ UNAVAILABLE_STATUSES = frozenset({"IR", "O", "OUT"})
 def suggest_default_excluded_player_ids(
     slate: Slate,
     projections: tuple[Projection, ...],
+    contexts: tuple[PlayerContext, ...] = (),
 ) -> frozenset[str]:
     """Suggest players who should not enter a lineup without an override.
 
@@ -27,6 +29,17 @@ def suggest_default_excluded_player_ids(
         for player in slate.players
         if (player.status or "").strip().upper() in UNAVAILABLE_STATUSES
     }
+    context_by_id = {item.platform_id: item for item in contexts}
+    unavailable.update(
+        player.platform_id
+        for player in slate.players
+        if (context := context_by_id.get(player.platform_id)) is not None
+        and (
+            context.active is False
+            or (context.injury_status or "").strip().upper()
+            in {"IR", "O", "OUT", "INJURED RESERVE"}
+        )
+    )
     quarterbacks_by_team: dict[str, list] = {}
     for player in slate.players:
         if (
@@ -60,12 +73,27 @@ def suggest_default_excluded_player_ids(
             if projection_ratio < .65 and salary_ratio < .80:
                 backups.add(quarterback.platform_id)
 
+    for team, quarterbacks in quarterbacks_by_team.items():
+        has_qb1 = any(
+            context_by_id.get(player.platform_id)
+            and context_by_id[player.platform_id].depth_chart_position == 1
+            for player in quarterbacks
+        )
+        if has_qb1:
+            backups.update(
+                player.platform_id
+                for player in quarterbacks
+                if context_by_id.get(player.platform_id)
+                and (context_by_id[player.platform_id].depth_chart_position or 1) > 1
+            )
+
     return frozenset(unavailable | backups)
 
 
 def suggest_max_once_player_ids(
     slate: Slate,
     projections: tuple[Projection, ...],
+    contexts: tuple[PlayerContext, ...] = (),
 ) -> frozenset[str]:
     """Identify fragile values that should not become a multi-lineup core.
 
@@ -79,11 +107,22 @@ def suggest_max_once_player_ids(
         for projection in projections
         if projection.platform_id
     }
-    return frozenset(
+    suggestions = {
         player.platform_id
         for player in slate.players
         if (projection := by_id.get(player.platform_id)) is not None
         and projection.floor is not None
         and projection.floor <= 1
         and 2 <= projection.projected_points < 10
+    }
+    context_by_id = {item.platform_id: item for item in contexts}
+    suggestions.update(
+        player.platform_id
+        for player in slate.players
+        if player.primary_position in {Position.RB, Position.WR, Position.TE}
+        and (context := context_by_id.get(player.platform_id)) is not None
+        and (context.depth_chart_position or 0) >= 3
+        and (projection := by_id.get(player.platform_id)) is not None
+        and projection.projected_points < 12
     )
+    return frozenset(suggestions)

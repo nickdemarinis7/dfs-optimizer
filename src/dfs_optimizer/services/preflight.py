@@ -7,6 +7,7 @@ from typing import Any
 from dfs_optimizer.models import Projection, Slate
 from dfs_optimizer.rules import classic_rules_for, single_game_rules_for
 from .risk import suggest_default_excluded_player_ids
+from .player_context import PlayerContext
 
 from .audit import AuditFinding, audit_lineups
 
@@ -29,6 +30,7 @@ def preflight_lineups(
     expected_lineups: int | None = None,
     projection_built_at: datetime | None = None,
     salary_loaded_at: datetime | None = None,
+    player_context: tuple[PlayerContext, ...] = (),
     now: datetime | None = None,
 ) -> PreflightReport:
     """Independently validate the artifacts that will be submitted."""
@@ -134,7 +136,9 @@ def preflight_lineups(
         else:
             passed.append(f"Salary and status file is fresh ({salary_age:.1f} hours old)")
 
-    role_risks = suggest_default_excluded_player_ids(slate, projections)
+    role_risks = suggest_default_excluded_player_ids(
+        slate, projections, player_context
+    )
     selected_ids = {
         entry.player.platform_id for lineup in lineups for entry in lineup.entries
     }
