@@ -41,12 +41,26 @@ def apply_app_style() -> None:
         h2, h3 { letter-spacing: -0.025em; }
         [data-testid="stCaptionContainer"] { color: #6e6e73; }
 
-        .lineup-studio-nav {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 1rem;
+        .st-key-lineup-studio-topbar {
+            position: sticky;
+            top: .7rem;
+            z-index: 999;
+            padding: .42rem .5rem;
             margin: 0 0 2.2rem;
+            border: 1px solid rgba(210, 210, 215, .68);
+            border-radius: 999px;
+            background: rgba(255, 255, 255, .78);
+            box-shadow: 0 10px 34px rgba(30, 45, 65, .08);
+            backdrop-filter: blur(18px) saturate(150%);
+            -webkit-backdrop-filter: blur(18px) saturate(150%);
+        }
+        .st-key-lineup-studio-topbar .stButton > button {
+            min-height: 2.15rem;
+            padding: .35rem .85rem;
+            border: 1px solid rgba(var(--ls-primary-rgb), .13);
+            background: var(--ls-soft);
+            color: var(--ls-primary-dark);
+            box-shadow: none;
         }
         .lineup-studio-brand {
             display: flex;
@@ -74,6 +88,14 @@ def apply_app_style() -> None:
             display: flex;
             align-items: center;
             gap: .35rem;
+        }
+        .lineup-studio-utility-label {
+            padding: .25rem .65rem;
+            border-radius: 999px;
+            color: #6e6e73;
+            background: #f1f1f4;
+            font-size: .74rem;
+            font-weight: 600;
         }
         .lineup-studio-step {
             width: 1.7rem;
@@ -129,12 +151,28 @@ def apply_app_style() -> None:
             line-height: 1.5;
             letter-spacing: -.018em;
         }
+        .lineup-studio-features {
+            display: flex;
+            flex-wrap: wrap;
+            gap: .5rem;
+            margin: -1rem 0 2rem;
+        }
+        .lineup-studio-feature {
+            padding: .5rem .75rem;
+            border: 1px solid rgba(var(--ls-primary-rgb), .10);
+            border-radius: 999px;
+            color: #505055;
+            background: rgba(255,255,255,.74);
+            font-size: .78rem;
+            font-weight: 560;
+            box-shadow: 0 4px 14px rgba(30, 45, 65, .045);
+        }
 
         /* Soft cards instead of dashboard-style boxes. */
         [data-testid="stVerticalBlockBorderWrapper"] {
-            border: 0;
-            background: rgba(245, 245, 247, .72);
-            box-shadow: none;
+            border: 1px solid rgba(210, 210, 215, .55);
+            background: linear-gradient(145deg, rgba(255,255,255,.86), rgba(245,245,247,.72));
+            box-shadow: 0 12px 32px rgba(30, 45, 65, .055);
             border-radius: 22px;
         }
         [data-testid="stMetric"] { padding: .15rem 0; }
@@ -181,8 +219,19 @@ def apply_app_style() -> None:
             border-radius: 20px;
         }
         [data-testid="stDataFrame"] {
-            border-radius: 14px;
+            border: 1px solid rgba(210, 210, 215, .5);
+            border-radius: 16px;
             overflow: hidden;
+            box-shadow: 0 8px 24px rgba(30, 45, 65, .04);
+        }
+        [data-testid="stAlert"] {
+            border: 0;
+            border-radius: 18px;
+        }
+        [data-testid="stSegmentedControl"] {
+            padding: .28rem;
+            border-radius: 999px;
+            background: #f1f1f4;
         }
 
         @media (max-width: 640px) {
@@ -191,7 +240,10 @@ def apply_app_style() -> None:
             }
             h1 { font-size: 2rem !important; }
             [data-testid="stMetricValue"] { font-size: 1.5rem; }
-            .lineup-studio-nav { margin-bottom: 1.65rem; }
+            .st-key-lineup-studio-topbar {
+                top: .35rem;
+                margin-bottom: 1.65rem;
+            }
             .lineup-studio-step-label { display: none; }
             .lineup-studio-hero { margin-bottom: 1.7rem; }
             .lineup-studio-hero h1 { font-size: 2.8rem; }
@@ -201,25 +253,56 @@ def apply_app_style() -> None:
     )
 
 
-def page_kicker(step: int, label: str) -> None:
+def page_kicker(
+    step: int | None,
+    label: str,
+    *,
+    home: bool = True,
+    total_steps: int = 3,
+) -> None:
     steps = "".join(
-        f'<span class="lineup-studio-step {"complete" if number < step else "active" if number == step else ""}"></span>'
-        for number in range(1, 4)
+        f'<span class="lineup-studio-step {"complete" if step and number < step else "active" if number == step else ""}"></span>'
+        for number in range(1, total_steps + 1)
     )
-    st.html(
-        f"""
-        <div class="lineup-studio-nav">
+    with st.container(
+        key="lineup-studio-topbar",
+        horizontal=True,
+        horizontal_alignment="distribute",
+        vertical_alignment="center",
+    ):
+        st.html(
+            """
             <div class="lineup-studio-brand">
                 <span class="lineup-studio-mark">LS</span>
                 LINEUP STUDIO
             </div>
+            """
+        )
+        if step is not None:
+            st.html(
+                f"""
             <div class="lineup-studio-steps">
                 {steps}
-                <span class="lineup-studio-step-label">{escape(label)} · {step}/3</span>
+                <span class="lineup-studio-step-label">{escape(label)} · {step}/{total_steps}</span>
             </div>
-        </div>
-        """
+                """
+            )
+        else:
+            st.html(f'<span class="lineup-studio-utility-label">{escape(label)}</span>')
+        if home and st.button(
+            "Home",
+            icon=":material/home:",
+            key=f"home-{label.casefold().replace(' ', '-')}",
+        ):
+            st.switch_page("app_pages/setup.py")
+
+
+def feature_strip(*features: str) -> None:
+    items = "".join(
+        f'<span class="lineup-studio-feature">{escape(feature)}</span>'
+        for feature in features
     )
+    st.html(f'<div class="lineup-studio-features">{items}</div>')
 
 
 def summary_strip(title: str, detail: str) -> None:

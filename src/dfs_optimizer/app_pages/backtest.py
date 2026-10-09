@@ -5,7 +5,7 @@ import hashlib
 import pandas as pd
 import streamlit as st
 
-from dfs_optimizer.app_ui import apply_platform_theme, hero
+from dfs_optimizer.app_ui import apply_platform_theme, hero, page_kicker
 from dfs_optimizer.backtesting import (
     evaluate_projection_rows,
     evaluate_projections,
@@ -29,6 +29,7 @@ projections = st.session_state.get("projections", ())
 if slate is not None:
     apply_platform_theme(slate.platform)
 
+page_kicker(None, "Backtest")
 hero(
     "How did they finish?",
     "Drop in the contest standings after it ends. We’ll find your generated lineups and grade the run automatically.",

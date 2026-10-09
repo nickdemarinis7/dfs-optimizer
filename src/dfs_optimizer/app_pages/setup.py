@@ -5,7 +5,13 @@ from pathlib import Path
 
 import streamlit as st
 
-from dfs_optimizer.app_ui import apply_platform_theme, hero, page_kicker, summary_strip
+from dfs_optimizer.app_ui import (
+    apply_platform_theme,
+    feature_strip,
+    hero,
+    page_kicker,
+    summary_strip,
+)
 from dfs_optimizer.projections import build_platform_average_projections
 from dfs_optimizer.services.projections import (
     build_historical_projections,
@@ -23,8 +29,9 @@ def _forecast(slate, season: int, week: int, cache_dir: str, model_version: str)
     return build_historical_projections(slate, season, week, cache_dir)
 
 
-page_kicker(1, "Set up")
+page_kicker(1, "Set up", home=False)
 hero("Build your Sunday.", "Drop in a salary file. Lineup Studio handles the contest, slate, and projection setup.")
+feature_strip("Live slate workflow", "Correlated simulations", "Post-contest learning")
 slate = None
 source_name = None
 salary_content = None

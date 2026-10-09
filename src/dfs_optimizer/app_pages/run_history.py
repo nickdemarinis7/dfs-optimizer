@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from dfs_optimizer.app_ui import apply_platform_theme, hero
+from dfs_optimizer.app_ui import apply_platform_theme, hero, page_kicker
 from dfs_optimizer.services.run_history import (
     compare_runs,
     list_run_records,
@@ -17,6 +17,7 @@ slate = st.session_state.get("slate")
 if slate is not None:
     apply_platform_theme(slate.platform)
 
+page_kicker(None, "Run history")
 hero(
     "Every run, preserved.",
     "Compare early-week and game-day portfolios, reopen any snapshot, and mark the one you actually submitted.",
