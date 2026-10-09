@@ -32,38 +32,51 @@ def _forecast(slate, season: int, week: int, cache_dir: str, model_version: str)
 
 
 page_kicker(1, "Set up", home=False)
-hero("Start with your slate.", "Upload one official salary file. We’ll detect the site and contest, then guide you through the rest.")
-action_guide(
-    1,
-    "Upload a salary CSV",
-    "Download the player list from DraftKings or FanDuel, then choose that file below. Nothing else is needed yet.",
-)
-slate = None
-source_name = None
-salary_content = None
-upload = st.file_uploader(
-    "Choose a DraftKings or FanDuel salary CSV",
-    type="csv",
-)
-if upload:
-    try:
-        salary_content = upload.getvalue()
-        slate = load_uploaded_salary_file(upload.name, salary_content)
-        source_name = upload.name
-    except (OSError, ValueError) as exc:
-        st.error(str(exc))
-
-if st.button("Open a previous run", icon=":material/history_toggle_off:"):
-    st.switch_page("app_pages/run_history.py")
+slate = st.session_state.get("slate")
+source_name = st.session_state.get("source_name")
+salary_content = st.session_state.get("salary_content")
 
 if slate is None:
+    hero("Start with your slate.", "Upload one official salary file. We’ll detect the site and contest, then guide you through the rest.")
+    action_guide(
+        1,
+        "Upload a salary CSV",
+        "Download the player list from DraftKings or FanDuel, then choose that file below. Nothing else is needed yet.",
+    )
+    upload = st.file_uploader(
+        "Choose a DraftKings or FanDuel salary CSV",
+        type="csv",
+        key="salary-upload",
+    )
+    if upload:
+        try:
+            salary_content = upload.getvalue()
+            slate = load_uploaded_salary_file(upload.name, salary_content)
+            source_name = upload.name
+        except (OSError, ValueError) as exc:
+            st.error(str(exc))
+        else:
+            st.session_state["slate"] = slate
+            st.session_state["source_name"] = source_name
+            st.session_state["salary_content"] = salary_content
+            st.rerun()
+
+    if st.button("Open a previous run", icon=":material/history_toggle_off:"):
+        st.switch_page("app_pages/run_history.py")
     st.caption("After upload, this screen will confirm your slate and show one button to continue.")
     st.stop()
 
 apply_platform_theme(slate.platform)
-
-if st.session_state.get("slate") != slate:
+hero("Your slate is ready.", "We found the contest details. Confirm the projection setup below and continue to player review.")
+summary_strip(
+    source_name,
+    f"{slate.platform.value.title()} · "
+    f"{slate.contest_format.value.replace('_', ' ').title()} · "
+    f"{len(slate.games)} games · {len(slate.players)} players",
+)
+if st.button("Change salary file", icon=":material/swap_horiz:"):
     for key in (
+        "slate", "source_name", "salary_content", "salary-upload",
         "projections", "projection_key", "projection_built_at", "ownership_hash", "lineups",
         "lineup_config_key", "run_archive", "run_archive_name", "saved_run_path",
         "current_run_id",
@@ -73,16 +86,7 @@ if st.session_state.get("slate") != slate:
         "calibration_record_key", "calibration_record", "saved_calibration_path",
     ):
         st.session_state.pop(key, None)
-st.session_state["slate"] = slate
-st.session_state["source_name"] = source_name
-st.session_state["salary_content"] = salary_content
-
-summary_strip(
-    source_name,
-    f"{slate.platform.value.title()} · "
-    f"{slate.contest_format.value.replace('_', ' ').title()} · "
-    f"{len(slate.games)} games · {len(slate.players)} players",
-)
+    st.rerun()
 
 action_guide(
     2,
