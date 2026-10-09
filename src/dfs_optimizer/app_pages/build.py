@@ -29,7 +29,10 @@ from dfs_optimizer.optimization import (
     generate_single_game_lineups,
 )
 from dfs_optimizer.services.projections import apply_uploaded_ownership
-from dfs_optimizer.services.risk import suggest_max_once_player_ids
+from dfs_optimizer.services.risk import (
+    suggest_default_excluded_player_ids,
+    suggest_max_once_player_ids,
+)
 from dfs_optimizer.services.scenarios import simulate_lineups
 try:
     from dfs_optimizer.services.run_archive import build_run_archive, save_run_archive
@@ -58,6 +61,9 @@ projection_by_id = {item.platform_id: item for item in projections}
 default_unique = 3 if slate.contest_format == ContestFormat.CLASSIC else 2
 players = {p.platform_id: p for p in slate.players if p.platform_id in projection_by_id}
 suggested_max_once = suggest_max_once_player_ids(slate, tuple(projections)) & players.keys()
+suggested_excluded = (
+    suggest_default_excluded_player_ids(slate, tuple(projections)) & players.keys()
+)
 label = lambda pid: f"{players[pid].name} — {players[pid].team} {players[pid].primary_position.value}"
 action_guide(
     1,
@@ -150,7 +156,9 @@ if customize_strategy:
 
         if slate.contest_format == ContestFormat.CLASSIC:
             locked = st.multiselect(
-                "Lock into every lineup", tuple(players), format_func=label,
+                "Lock into every lineup",
+                tuple(pid for pid in players if pid not in suggested_excluded),
+                format_func=label,
                 key=f"build-locks-{hash(slate)}",
             )
         max_once = st.multiselect(
@@ -237,11 +245,12 @@ st.dataframe(
 with st.container(border=True):
     section_intro(
         "Exclude a player",
-        "Optional. Remove anyone who is inactive, a backup, or simply someone you do not want.",
+        "Unavailable players and clearly subordinate backup quarterbacks are selected automatically. You can override any suggestion.",
         icon=":material/person_remove:",
     )
     excluded = st.multiselect(
         "Players to exclude", tuple(pid for pid in players if pid not in locked),
+        default=tuple(pid for pid in suggested_excluded if pid not in locked),
         format_func=label, key=f"build-exclusions-{hash(slate)}",
         help="Excluded players cannot appear in any generated lineup.",
     )

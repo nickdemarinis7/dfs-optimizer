@@ -5,7 +5,7 @@ from .projections import (
     download_historical_data,
     historical_data_paths,
 )
-from .risk import suggest_max_once_player_ids
+from .risk import suggest_default_excluded_player_ids, suggest_max_once_player_ids
 from .results_review import (
     ResultsReview,
     ReviewedLineup,
@@ -39,6 +39,7 @@ __all__ = [
     "apply_uploaded_ownership",
     "build_historical_projections",
     "suggest_max_once_player_ids",
+    "suggest_default_excluded_player_ids",
     "ResultsReview",
     "ReviewedLineup",
     "SubmittedEntry",
