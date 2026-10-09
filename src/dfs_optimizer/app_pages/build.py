@@ -56,140 +56,126 @@ if slate is None or not projections:
 
 projection_by_id = {item.platform_id: item for item in projections}
 default_unique = 3 if slate.contest_format == ContestFormat.CLASSIC else 2
+players = {p.platform_id: p for p in slate.players if p.platform_id in projection_by_id}
+suggested_max_once = suggest_max_once_player_ids(slate, tuple(projections)) & players.keys()
+label = lambda pid: f"{players[pid].name} — {players[pid].team} {players[pid].primary_position.value}"
 action_guide(
     1,
     "Review flagged players",
-    "Use the status and signal tables below. Exclude anyone who is out or who you do not want in a lineup.",
+    "Check the player table, then exclude anyone who is out or who you do not trust.",
 )
-optional_label("Optional controls")
+
 with st.container(border=True):
     section_intro(
-        "Portfolio settings",
-        "These defaults target a three-entry tournament. Change them only when your contest or risk preference is different.",
-        icon=":material/tune:",
+        "Your entries",
+        "Three lineups is the recommended tournament setup. The optimizer diversifies them automatically.",
+        icon=":material/format_list_numbered:",
     )
-    st.caption("The defaults are tuned for a three-entry tournament portfolio.")
     lineup_count = int(st.number_input(
         "Number of lineups", min_value=1, max_value=20, value=3, step=1,
         key=f"build-lineup-count-{slate.contest_format.value}",
         help="The number of separate contest entries you want the optimizer to create.",
     ))
-    minimum_unique = int(st.number_input(
-        "Minimum unique players", min_value=1,
-        max_value=6 if slate.contest_format == ContestFormat.SINGLE_GAME else 9,
-        value=default_unique, step=1,
-        key=f"build-minimum-unique-{slate.contest_format.value}",
-        help="How many players must change from one lineup to the next.",
-    ))
-    maximum_player_exposure = int(st.number_input(
-        "Maximum player exposure (%)", min_value=5, max_value=100, value=67, step=5,
-        key=f"build-player-exposure-{slate.contest_format.value}",
-        help="Caps how often a player can appear across the portfolio.",
-    )) / 100
-    include_ceiling_lineup = st.toggle(
-        "Make the final lineup ceiling-focused", value=True,
-        key=f"build-ceiling-lineup-{slate.contest_format.value}",
-        help="Builds the final entry around upside instead of median projection. Recommended for tournaments.",
-    )
-    run_label = st.text_input(
-        "Run label (optional)",
-        placeholder="Wednesday baseline or Sunday final",
-        key=f"build-run-label-{slate.platform.value}-{slate.contest_format.value}",
-        help="Makes this generation easy to find and compare later.",
-    )
-    if slate.contest_format == ContestFormat.CLASSIC:
-        maximum_qb_exposure = int(st.number_input(
-            "Maximum QB exposure (%)", min_value=5, max_value=100, value=67, step=5,
-            key="build-qb-exposure",
-            help="Limits how many lineups can use the same quarterback.",
-        )) / 100
-        maximum_dst_exposure = int(st.number_input(
-            "Maximum defense exposure (%)", min_value=5, max_value=100, value=34, step=5,
-            key="build-dst-exposure",
-            help="Limits how many lineups can use the same defense.",
-        )) / 100
-        require_qb_stack = st.toggle(
-            "Require a QB stack", value=True, key="build-qb-stack",
-            help="Pairs each quarterback with at least one of his receivers to capture correlated scoring.",
-        )
-        require_bring_back = st.toggle(
-            "Require an opponent bring-back", value=True, disabled=not require_qb_stack,
-            key="build-bring-back",
-            help="Adds an opponent from the same game, targeting a competitive high-scoring game script.",
-        )
-    else:
-        maximum_multiplier_exposure = int(st.number_input(
-            "Maximum MVP/Captain exposure (%)", min_value=5, max_value=100, value=34, step=5,
-            key="build-multiplier-exposure",
-            help="Limits how often one player can occupy the boosted MVP or Captain slot.",
-        )) / 100
 
-portfolio_label = "3-max tournament" if lineup_count == 3 else f"{lineup_count}-lineup portfolio"
-summary_strip(
-    f"{slate.platform.value.title()} {slate.contest_format.value.replace('_', ' ').title()}",
-    f"{len(projections)} projected players · {portfolio_label}",
-)
-
-players = {p.platform_id: p for p in slate.players if p.platform_id in projection_by_id}
-suggested_max_once = suggest_max_once_player_ids(slate, tuple(projections)) & players.keys()
-label = lambda pid: f"{players[pid].name} — {players[pid].team} {players[pid].primary_position.value}"
+minimum_unique = default_unique
+maximum_player_exposure = .67
+include_ceiling_lineup = True
+run_label = ""
 locked = []
-with st.container(border=True):
-    section_intro(
-        "Your player decisions",
-        "You can leave these alone. Use them when injury news or your own research changes who should enter the optimizer.",
-        icon=":material/person_edit:",
-    )
-    with st.container():
+max_once = list(suggested_max_once)
+if slate.contest_format == ContestFormat.CLASSIC:
+    maximum_qb_exposure = .67
+    maximum_dst_exposure = .34
+    require_qb_stack = True
+    require_bring_back = True
+else:
+    maximum_multiplier_exposure = .34
+
+customize_strategy = st.toggle(
+    "Customize strategy",
+    help="Reveal expert controls for exposure, stacking, locks, ownership, and lineup diversity.",
+)
+if customize_strategy:
+    optional_label("Advanced strategy")
+    with st.container(border=True):
+        section_intro(
+            "Portfolio strategy",
+            "The recommended defaults are selected. Adjust these only when you have a specific tournament plan.",
+            icon=":material/tune:",
+        )
+        minimum_unique = int(st.number_input(
+            "Minimum unique players", min_value=1,
+            max_value=6 if slate.contest_format == ContestFormat.SINGLE_GAME else 9,
+            value=default_unique, step=1,
+            key=f"build-minimum-unique-{slate.contest_format.value}",
+            help="How many players must change from one lineup to the next.",
+        ))
+        maximum_player_exposure = int(st.number_input(
+            "Maximum player exposure (%)", min_value=5, max_value=100, value=67, step=5,
+            key=f"build-player-exposure-{slate.contest_format.value}",
+            help="Caps how often a player can appear across the portfolio.",
+        )) / 100
+        include_ceiling_lineup = st.toggle(
+            "Make the final lineup ceiling-focused", value=True,
+            key=f"build-ceiling-lineup-{slate.contest_format.value}",
+            help="Builds the final entry around upside instead of median projection.",
+        )
+        run_label = st.text_input(
+            "Run label (optional)", placeholder="Wednesday baseline or Sunday final",
+            key=f"build-run-label-{slate.platform.value}-{slate.contest_format.value}",
+        )
+        if slate.contest_format == ContestFormat.CLASSIC:
+            maximum_qb_exposure = int(st.number_input(
+                "Maximum QB exposure (%)", 5, 100, 67, 5, key="build-qb-exposure",
+                help="Limits how many lineups can use the same quarterback.",
+            )) / 100
+            maximum_dst_exposure = int(st.number_input(
+                "Maximum defense exposure (%)", 5, 100, 34, 5, key="build-dst-exposure",
+                help="Limits how many lineups can use the same defense.",
+            )) / 100
+            require_qb_stack = st.toggle(
+                "Require a QB stack", value=True, key="build-qb-stack",
+                help="Pairs each quarterback with at least one of his receivers.",
+            )
+            require_bring_back = st.toggle(
+                "Require an opponent bring-back", value=True,
+                disabled=not require_qb_stack, key="build-bring-back",
+                help="Adds an opponent from the same game.",
+            )
+        else:
+            maximum_multiplier_exposure = int(st.number_input(
+                "Maximum MVP/Captain exposure (%)", 5, 100, 34, 5,
+                key="build-multiplier-exposure",
+            )) / 100
+
         if slate.contest_format == ContestFormat.CLASSIC:
             locked = st.multiselect(
                 "Lock into every lineup", tuple(players), format_func=label,
                 key=f"build-locks-{hash(slate)}",
-                help="Forces a player into every generated lineup. Use sparingly.",
             )
-        excluded = st.multiselect(
-            "Exclude completely", tuple(pid for pid in players if pid not in locked), format_func=label,
-            key=f"build-exclusions-{hash(slate)}",
-            help="Remove inactive players, backups, or anyone you do not want.",
-        )
         max_once = st.multiselect(
-            "Max once",
-            tuple(pid for pid in players if pid not in locked and pid not in excluded),
-            default=tuple(
-                pid for pid in suggested_max_once
-                if pid not in locked and pid not in excluded
-            ),
-            format_func=label,
-            key=f"build-max-once-{hash(slate)}",
-            help="Fragile values can appear in at most one lineup. Low-floor suggestions are selected automatically.",
+            "Max once", tuple(pid for pid in players if pid not in locked),
+            default=tuple(pid for pid in suggested_max_once if pid not in locked),
+            format_func=label, key=f"build-max-once-{hash(slate)}",
+            help="Automatically selected low-floor values can appear in only one lineup.",
         )
-
-with st.container(border=True):
-    section_intro(
-        "Ownership projections",
-        "Optional: add projected roster percentages to help the optimizer avoid overly popular combinations.",
-        icon=":material/add_chart:",
-    )
-    with st.container():
-        ownership = st.file_uploader("Projected ownership CSV", type="csv")
+        ownership = st.file_uploader("Projected ownership CSV (optional)", type="csv")
         if ownership:
             content = ownership.getvalue()
             ownership_hash = hashlib.sha256(content).hexdigest()
             if st.session_state.get("ownership_hash") != ownership_hash:
                 try:
-                    projections, matches = apply_uploaded_ownership(
-                        slate, projections, ownership.name, content
-                    )
+                    projections, matches = apply_uploaded_ownership(slate, projections, ownership.name, content)
                     st.session_state["projections"] = projections
                     st.session_state["ownership_hash"] = ownership_hash
                     st.toast(f"Matched ownership for {matches} players.", icon=":material/check:")
                 except (OSError, ValueError) as exc:
                     st.error(f"Could not apply ownership projections: {exc}")
-locked_ids, excluded_ids = frozenset(locked), frozenset(excluded)
-limited_ids = frozenset(max_once) - locked_ids - excluded_ids
-ownership_coverage = (
-    sum(item.projected_ownership is not None for item in projections) / len(projections)
-    if projections else 0
+
+portfolio_label = "3-max tournament" if lineup_count == 3 else f"{lineup_count}-lineup portfolio"
+summary_strip(
+    f"{slate.platform.value.title()} {slate.contest_format.value.replace('_', ' ').title()}",
+    f"{len(projections)} projected players · {portfolio_label}",
 )
 
 st.subheader("Players to review")
@@ -248,44 +234,23 @@ st.dataframe(
     height=min(420, 36 + max(1, len(pool_rows)) * 35),
 )
 
-news = []
-for player in players.values():
-    if player.platform_id in excluded_ids:
-        continue
-    projection = projection_by_id[player.platform_id]
-    if player.status:
-        news.append(("Status", player.name, player.team, player.status))
-    if projection.projected_points < 2:
-        news.append(("Low projection", player.name, player.team, f"{projection.projected_points:.2f} points"))
-    if player.platform_id in limited_ids:
-        news.append(("Max once", player.name, player.team, "Limited to one portfolio lineup"))
-qbs = {}
-for player in players.values():
-    if player.primary_position == Position.QB and projection_by_id[player.platform_id].projected_points >= 5 and player.platform_id not in excluded_ids:
-        qbs.setdefault(player.team, []).append(player.name)
-for team, names in qbs.items():
-    if len(names) > 1:
-        news.append(("QB decision", ", ".join(names), team, "Multiple usable quarterback projections"))
-st.subheader("Player signals")
-if news:
-    signal_types = ("All", *dict.fromkeys(item[0] for item in news))
-    signal_view = st.segmented_control(
-        "Signal filter",
-        signal_types,
-        default="All",
-        label_visibility="collapsed",
-        width="stretch",
+with st.container(border=True):
+    section_intro(
+        "Exclude a player",
+        "Optional. Remove anyone who is inactive, a backup, or simply someone you do not want.",
+        icon=":material/person_remove:",
     )
-    visible_news = [item for item in news if signal_view == "All" or item[0] == signal_view]
-    st.caption(f"{len(visible_news)} of {len(news)} signals shown")
-    st.dataframe(
-        pd.DataFrame(visible_news, columns=("Type", "Player", "Team", "Details")),
-        width="stretch",
-        hide_index=True,
-        height=min(300, 36 + max(1, len(visible_news)) * 35),
+    excluded = st.multiselect(
+        "Players to exclude", tuple(pid for pid in players if pid not in locked),
+        format_func=label, key=f"build-exclusions-{hash(slate)}",
+        help="Excluded players cannot appear in any generated lineup.",
     )
-else:
-    st.caption("No player signals need review.")
+locked_ids, excluded_ids = frozenset(locked), frozenset(excluded)
+limited_ids = frozenset(max_once) - locked_ids - excluded_ids
+ownership_coverage = (
+    sum(item.projected_ownership is not None for item in projections) / len(projections)
+    if projections else 0
+)
 
 strategy_parts = [
     f"{minimum_unique}-player uniqueness",
