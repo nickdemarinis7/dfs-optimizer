@@ -4,7 +4,10 @@ import pandas as pd
 import streamlit as st
 
 from dfs_optimizer.app_ui import apply_platform_theme, hero
-from dfs_optimizer.services.results_review import review_contest_results
+from dfs_optimizer.services.results_review import (
+    extract_submitted_entries,
+    review_contest_results,
+)
 
 
 slate = st.session_state.get("slate")
@@ -33,7 +36,7 @@ results_file = st.file_uploader(
     help="Use the final contest standings export from DraftKings or FanDuel.",
 )
 entry_filter = st.text_input(
-    "Entry name contains (optional)",
+    "Your username (recommended)",
     placeholder="Your username",
     help="Use this when an identical lineup appears more than once with different scores.",
 )
@@ -56,6 +59,42 @@ if results_file is not None:
         metrics[1].metric("Winning score", f"{review.winning_score:.2f}")
         metrics[2].metric("Matched", f"{len(review.lineups)}/{len(lineups)}")
 
+        if entry_filter.strip():
+            submitted = extract_submitted_entries(
+                results_file.getvalue(),
+                results_file.name,
+                slate.platform,
+                slate.contest_format,
+                entry_filter,
+            )
+            st.subheader("Actual submitted entries")
+            if submitted:
+                st.dataframe(
+                    pd.DataFrame([
+                        {
+                            "Rank": item.rank,
+                            "Score": item.score,
+                            "Top %": round(100 * item.rank / review.field_size, 2),
+                            "Duplicates": item.duplication,
+                            "Lineup": ", ".join(
+                                f"{role} {name}".strip()
+                                for role, name in item.lineup
+                            ),
+                        }
+                        for item in submitted
+                    ]),
+                    hide_index=True,
+                    width="stretch",
+                )
+                if len(submitted) != len(lineups) or len(review.lineups) != len(submitted):
+                    st.info(
+                        "Your final submitted entries differ from this saved run. "
+                        "The table above is authoritative for post-contest review."
+                    )
+            else:
+                st.warning("No scored entries matched that username.")
+
+        st.subheader("Saved-run matches")
         if review.lineups:
             st.dataframe(
                 pd.DataFrame([

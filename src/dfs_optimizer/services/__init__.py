@@ -6,7 +6,13 @@ from .projections import (
     historical_data_paths,
 )
 from .risk import suggest_max_once_player_ids
-from .results_review import ResultsReview, ReviewedLineup, review_contest_results
+from .results_review import (
+    ResultsReview,
+    ReviewedLineup,
+    SubmittedEntry,
+    extract_submitted_entries,
+    review_contest_results,
+)
 from .portfolio import PortfolioDiagnostics, analyze_portfolio
 from .preflight import PreflightReport, preflight_lineups
 from .audit import AuditFinding, audit_lineups
@@ -35,6 +41,8 @@ __all__ = [
     "suggest_max_once_player_ids",
     "ResultsReview",
     "ReviewedLineup",
+    "SubmittedEntry",
+    "extract_submitted_entries",
     "review_contest_results",
     "build_run_archive",
     "save_run_archive",

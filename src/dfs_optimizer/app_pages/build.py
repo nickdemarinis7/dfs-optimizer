@@ -313,7 +313,9 @@ if st.button(
             else:
                 settings = SingleGameOptimizationSettings(
                     multiplier_positions=frozenset({Position.QB, Position.RB, Position.WR, Position.TE}),
-                    minimum_multiplier_ceiling=20, minimum_quarterbacks=1,
+                    # Avoid a brittle cutoff like Week 5's Bucky Irving projection:
+                    # 19.88 multiplied ceiling, yet a winning Captain outcome.
+                    minimum_multiplier_ceiling=18, minimum_quarterbacks=1,
                     minimum_quarterback_projection=5, minimum_player_projection=.1,
                     maximum_players_per_team=4, maximum_kickers_and_defenses=1,
                     maximum_dst_opponents=1, require_multiplier_receiver_qb=True,
