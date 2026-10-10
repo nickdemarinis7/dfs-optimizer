@@ -7,6 +7,7 @@ from pathlib import Path
 from dfs_optimizer.models import ContestFormat, Platform, Player, Position, Slate, Sport
 from dfs_optimizer.services.cfb_projections import (
     build_cfb_projections_from_file,
+    estimate_cfb_ownership,
     infer_cfb_season,
 )
 
@@ -55,9 +56,24 @@ class CFBProjectionTests(unittest.TestCase):
         self.assertEqual(by_id["wr"].projected_points, 8)
         self.assertLessEqual(by_id["qb"].p25, by_id["qb"].projected_points)
         self.assertGreaterEqual(by_id["qb"].p75, by_id["qb"].projected_points)
+        self.assertIsNotNone(by_id["qb"].projected_ownership)
+        self.assertIsNotNone(by_id["wr"].projected_ownership)
 
     def test_infers_season_from_slate_metadata(self) -> None:
         self.assertEqual(infer_cfb_season(self.slate), 2026)
+
+    def test_ownership_proxy_is_bounded_for_small_slates(self) -> None:
+        from dfs_optimizer.models import Projection
+
+        estimates = estimate_cfb_ownership(self.slate, (
+            Projection("Example Quarterback Jr.", "AAA", 24, platform_id="qb", p90=35),
+            Projection("Unmatched Receiver", "AAA", 8, platform_id="wr", p90=12),
+        ))
+        by_id = {item.platform_id: item for item in estimates}
+        self.assertTrue(all(
+            0 <= item.projected_ownership <= 55 for item in estimates
+        ))
+        self.assertEqual(by_id["qb"].projected_ownership, 55)
 
 
 if __name__ == "__main__":

@@ -181,7 +181,7 @@ else:
     current_projection_key = st.session_state.get("projection_key") or ()
     cfb_model = (
         "recent-form forecast"
-        if current_projection_key and current_projection_key[0] == "cfb-recent-usage-v1"
+        if current_projection_key and current_projection_key[0] == "cfb-recent-usage-v2"
         else "platform-average baseline"
     )
     with st.container(border=True):
@@ -212,6 +212,27 @@ else:
             st.caption(
                 f"{adjusted} players were adjusted using current-season game history; "
                 "unmatched players retain the platform baseline."
+            )
+        ownership_count = sum(
+            projection.projected_ownership is not None
+            for projection in projections
+        )
+        if ownership_count:
+            st.caption(
+                f"Ownership leverage uses a slate-relative estimate for "
+                f"{ownership_count} players—not reported contest ownership."
+            )
+        likely_backup_qbs = sorted(
+            players[player_id].name
+            for player_id in suggested_excluded
+            if player_id in players
+            and players[player_id].primary_position == Position.QB
+        )
+        if likely_backup_qbs:
+            st.warning(
+                "Likely backup QB safeguard: " + ", ".join(likely_backup_qbs)
+                + ". They are preselected for exclusion; confirm before building.",
+                icon=":material/shield:",
             )
 
 if not player_context and st.session_state.get("player_context_error"):
@@ -395,6 +416,7 @@ for player in players.values():
             100 * projection.bust_probability
             if projection.bust_probability is not None else None
         ),
+        "Est. own %": projection.projected_ownership,
         "Status": (player.status or "Available").upper(),
         "Role": context_by_id[player.platform_id].role_label if player.platform_id in context_by_id else "—",
     })
@@ -407,6 +429,10 @@ st.dataframe(
         "Projection": st.column_config.NumberColumn(format="%.1f"),
         "P90": st.column_config.NumberColumn(format="%.1f"),
         "Bust %": st.column_config.NumberColumn(format="%.0f%%"),
+        "Est. own %": st.column_config.NumberColumn(
+            format="%.1f%%",
+            help="Estimated from this slate's salary, projection, value, ceiling, and position rank. It is not reported contest ownership.",
+        ),
     },
     width="stretch",
     hide_index=True,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from dataclasses import replace
 import math
 from pathlib import Path
 import re
@@ -14,7 +15,7 @@ from dfs_optimizer.models import OffensiveStatLine, Player, Position, Projection
 from dfs_optimizer.rules import nfl_scoring_for
 
 
-CFB_FORECAST_MODEL_VERSION = "cfb-recent-usage-v1"
+CFB_FORECAST_MODEL_VERSION = "cfb-recent-usage-v2"
 
 
 @dataclass(slots=True)
@@ -213,7 +214,114 @@ def build_cfb_projections_from_file(
             p90=round(p90, 3),
             bust_probability=min(1.0, max(0.0, bust)),
         ))
-    return tuple(projections)
+    return estimate_cfb_ownership(slate, tuple(projections))
+
+
+def estimate_cfb_ownership(
+    slate: Slate,
+    projections: tuple[Projection, ...],
+) -> tuple[Projection, ...]:
+    """Add a transparent slate-relative ownership estimate.
+
+    This is deliberately a proxy rather than a claim about contest-field data.
+    It rewards projection, value, salary, ceiling, and position-relative rank,
+    then scales the field to the number of roster slots that must be filled.
+    """
+    players = {
+        player.platform_id: player
+        for player in slate.players
+        if player.platform_id
+    }
+    eligible = tuple(
+        projection for projection in projections
+        if projection.platform_id in players and projection.projected_points > 0
+    )
+    if not eligible:
+        return projections
+
+    points = _percentile_ranks({
+        item.platform_id: item.projected_points for item in eligible
+    })
+    values = _percentile_ranks({
+        item.platform_id: item.projected_points
+        / max(1, players[item.platform_id].salary / 1000)
+        for item in eligible
+    })
+    salaries = _percentile_ranks({
+        item.platform_id: float(players[item.platform_id].salary)
+        for item in eligible
+    })
+    ceilings = _percentile_ranks({
+        item.platform_id: item.p90 or item.ceiling or item.projected_points
+        for item in eligible
+    })
+    position_scores: dict[str, float] = {}
+    by_position: dict[Position, dict[str, float]] = defaultdict(dict)
+    for item in eligible:
+        player = players[item.platform_id]
+        by_position[player.primary_position][item.platform_id] = item.projected_points
+    for position_values in by_position.values():
+        position_scores.update(_percentile_ranks(position_values))
+
+    raw = {
+        item.platform_id: max(.02, math.exp(
+            2.50 * points[item.platform_id]
+            + 1.80 * values[item.platform_id]
+            + .50 * salaries[item.platform_id]
+            + 1.00 * ceilings[item.platform_id]
+            + .60 * position_scores[item.platform_id]
+        ))
+        for item in eligible
+    }
+    roster_slots = 6 if slate.contest_format.value == "single_game" else (
+        8 if slate.platform.value == "fanduel" else 9
+    )
+    ownership = _scale_with_cap(raw, roster_slots * 100.0, cap=55.0)
+    return tuple(
+        replace(
+            item,
+            projected_ownership=round(ownership.get(item.platform_id, 0.0), 2),
+        )
+        for item in projections
+    )
+
+
+def _percentile_ranks(values: dict[str, float]) -> dict[str, float]:
+    ordered = sorted(values.items(), key=lambda item: (item[1], item[0]))
+    denominator = max(1, len(ordered) - 1)
+    return {
+        key: index / denominator
+        for index, (key, _) in enumerate(ordered)
+    }
+
+
+def _scale_with_cap(
+    weights: dict[str, float], target: float, *, cap: float
+) -> dict[str, float]:
+    remaining = set(weights)
+    result: dict[str, float] = {}
+    remaining_target = min(target, cap * len(weights))
+    while remaining:
+        total_weight = sum(weights[key] for key in remaining)
+        if total_weight <= 0:
+            equal = remaining_target / len(remaining)
+            result.update({key: equal for key in remaining})
+            break
+        newly_capped = {
+            key for key in remaining
+            if remaining_target * weights[key] / total_weight >= cap
+        }
+        if not newly_capped:
+            result.update({
+                key: remaining_target * weights[key] / total_weight
+                for key in remaining
+            })
+            break
+        for key in newly_capped:
+            result[key] = cap
+            remaining_target -= cap
+        remaining -= newly_capped
+    return result
 
 
 def _valid_name(value: str | None) -> bool:

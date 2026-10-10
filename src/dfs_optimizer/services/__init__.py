@@ -48,6 +48,7 @@ __all__ = [
     "build_historical_projections",
     "build_cfb_projections",
     "build_cfb_projections_from_file",
+    "estimate_cfb_ownership",
     "infer_cfb_season",
     "suggest_max_once_player_ids",
     "suggest_default_excluded_player_ids",
@@ -82,5 +83,6 @@ from .cfb_projections import (
     CFB_FORECAST_MODEL_VERSION,
     build_cfb_projections,
     build_cfb_projections_from_file,
+    estimate_cfb_ownership,
     infer_cfb_season,
 )

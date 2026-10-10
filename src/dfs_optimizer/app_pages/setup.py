@@ -26,6 +26,7 @@ from dfs_optimizer.services.player_context import fetch_player_context
 from dfs_optimizer.services.cfb_projections import (
     CFB_FORECAST_MODEL_VERSION,
     build_cfb_projections,
+    estimate_cfb_ownership,
     infer_cfb_season,
 )
 from dfs_optimizer.services.slates import infer_slate_period, load_uploaded_salary_file
@@ -205,8 +206,10 @@ if slate.sport == Sport.CFB:
             "a salary-average baseline."
         )
         if st.button("Use salary-average fallback", width="stretch"):
-            fallback = build_platform_average_projections(slate)
-            fallback_key = ("cfb-platform-average-v1", hash(slate))
+            fallback = estimate_cfb_ownership(
+                slate, build_platform_average_projections(slate)
+            )
+            fallback_key = ("cfb-platform-average-v2", hash(slate))
             st.session_state["projections"] = fallback
             st.session_state["projection_key"] = fallback_key
             st.session_state["projection_built_at"] = datetime.now(timezone.utc)
