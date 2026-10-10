@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from dfs_optimizer.models import Platform, Position
+from dfs_optimizer.models import Platform, Position, Sport
 from dfs_optimizer.rules import classic_rules_for
 
 
@@ -28,7 +28,21 @@ class ClassicRosterRuleTests(unittest.TestCase):
         self.assertFalse(flex.accepts(Position.QB))
         self.assertFalse(flex.accepts(Position.DST))
 
+    def test_draftkings_college_rules_include_super_flex(self) -> None:
+        rules = classic_rules_for(Platform.DRAFTKINGS, Sport.CFB)
+
+        self.assertEqual(rules.lineup_size, 8)
+        self.assertEqual(rules.salary_cap, 50_000)
+        self.assertEqual(rules.slots[-1].name, "S-FLEX")
+        self.assertTrue(rules.slots[-1].accepts(Position.QB))
+
+    def test_fanduel_college_rules_treat_tight_ends_as_receivers(self) -> None:
+        rules = classic_rules_for(Platform.FANDUEL, Sport.CFB)
+
+        self.assertEqual(rules.lineup_size, 7)
+        self.assertEqual(rules.salary_cap, 60_000)
+        self.assertTrue(rules.slots[3].accepts(Position.TE))
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -26,6 +26,7 @@ def build_run_archive(
     created = created_at or datetime.now(timezone.utc)
     slate_id = hashlib.sha256(
         "|".join((
+            slate.sport.value,
             slate.platform.value,
             slate.contest_format.value,
             *sorted(slate.games),
@@ -43,6 +44,7 @@ def build_run_archive(
             ),
             "salary_source": slate.source_name,
             "platform": slate.platform.value,
+            "sport": slate.sport.value,
             "contest_format": slate.contest_format.value,
             "projection_count": len(projections),
             "lineup_count": len(lineups),

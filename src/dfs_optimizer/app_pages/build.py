@@ -18,7 +18,7 @@ from dfs_optimizer.app_ui import (
     summary_strip,
 )
 from dfs_optimizer.importers import match_projections
-from dfs_optimizer.models import ContestFormat, Position
+from dfs_optimizer.models import ContestFormat, Position, Sport
 from dfs_optimizer.optimization import (
     ClassicOptimizationSettings,
     LineupOptimizationError,
@@ -99,7 +99,8 @@ action_guide(
 )
 prelock = summarize_prelock_context(slate, player_context)
 age_minutes = context_age_minutes()
-with st.container(border=True):
+if slate.sport == Sport.NFL:
+  with st.container(border=True):
     section_intro(
         "Pre-lock check",
         "Current availability and role signals are checked again before optimization.",
@@ -176,6 +177,19 @@ with st.container(border=True):
         except (OSError, ValueError) as exc:
             st.session_state["player_context_error"] = str(exc)
             st.error("Player news could not be refreshed. Try again before lock.")
+else:
+    with st.container(border=True):
+        section_intro(
+            "College player check",
+            "Injury designations come from the uploaded salary file. Live college depth-chart data is not connected yet.",
+            icon=":material/sports_football:",
+        )
+        unavailable_count = len(prelock.unavailable_player_ids)
+        questionable_count = len(prelock.questionable_player_ids)
+        st.caption(
+            f"{unavailable_count} unavailable · {questionable_count} injury watch · "
+            "platform-average baseline"
+        )
 
 if not player_context and st.session_state.get("player_context_error"):
     st.warning(
@@ -306,7 +320,8 @@ if customize_strategy:
 
 portfolio_label = "3-max tournament" if lineup_count == 3 else f"{lineup_count}-lineup portfolio"
 summary_strip(
-    f"{slate.platform.value.title()} {slate.contest_format.value.replace('_', ' ').title()}",
+    f"{slate.sport.value.upper()} · {slate.platform.value.title()} "
+    f"{slate.contest_format.value.replace('_', ' ').title()}",
     f"{len(projections)} projected players · {portfolio_label}",
 )
 
@@ -438,7 +453,7 @@ if st.button(
         generation_warning = None
         live_context = player_context
         live_age = context_age_minutes()
-        if live_age is None or live_age > 15:
+        if slate.sport == Sport.NFL and (live_age is None or live_age > 15):
             with st.spinner("Running the final player-news check…"):
                 try:
                     live_context = fetch_player_context(

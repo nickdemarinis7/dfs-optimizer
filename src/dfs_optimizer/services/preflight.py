@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from dfs_optimizer.models import Projection, Slate
+from dfs_optimizer.models import Projection, Slate, Sport
 from dfs_optimizer.rules import classic_rules_for, single_game_rules_for
 from .risk import suggest_default_excluded_player_ids
 from .player_context import PlayerContext
@@ -38,7 +38,7 @@ def preflight_lineups(
     findings = list(audit_lineups(slate, lineups))
     passed: list[str] = []
     rules = (
-        classic_rules_for(slate.platform)
+        classic_rules_for(slate.platform, slate.sport)
         if slate.contest_format.value == "classic"
         else single_game_rules_for(slate.platform)
     )
@@ -137,12 +137,12 @@ def preflight_lineups(
         else:
             passed.append(f"Salary and status file is fresh ({salary_age:.1f} hours old)")
 
-    if player_context_built_at is None:
+    if slate.sport == Sport.NFL and player_context_built_at is None:
         findings.append(AuditFinding(
             "WARNING", "player_context_time_unknown",
             "Live injury and depth-chart check time is unavailable. Refresh player news before lock.",
         ))
-    else:
+    elif slate.sport == Sport.NFL:
         checked_at = player_context_built_at
         if checked_at.tzinfo is None:
             checked_at = checked_at.replace(tzinfo=timezone.utc)

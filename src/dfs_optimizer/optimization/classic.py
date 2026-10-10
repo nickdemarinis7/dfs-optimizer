@@ -93,7 +93,7 @@ def generate_classic_lineups(
 ) -> tuple[OptimizedLineup, ...]:
     if count < 1:
         raise ValueError("lineup count must be at least 1")
-    resolved_rules = rules or classic_rules_for(slate.platform)
+    resolved_rules = rules or classic_rules_for(slate.platform, slate.sport)
     if not 1 <= minimum_unique_players <= resolved_rules.lineup_size:
         raise ValueError("minimum_unique_players must be between 1 and lineup size")
     if not 0 < maximum_player_exposure <= 1:
@@ -182,7 +182,7 @@ def generate_classic_3max_portfolio(
     """Select two balanced lineups and one ceiling lineup as a single portfolio."""
     if candidate_count < 3:
         raise ValueError("candidate_count must be at least 3")
-    rules = classic_rules_for(slate.platform)
+    rules = classic_rules_for(slate.platform, slate.sport)
     balanced_settings = replace(settings, ceiling_weight=0.30)
     ceiling_settings = replace(settings, ceiling_weight=0.70)
     candidates_by_ids: dict[frozenset[str], OptimizedLineup] = {}
@@ -304,11 +304,13 @@ def _optimize_classic_lineup(
     prior_stack_combinations: tuple[tuple[str, str, str], ...],
     exposure_counts: dict[str, int],
 ) -> OptimizedLineup:
-    rules = rules or classic_rules_for(slate.platform)
+    rules = rules or classic_rules_for(slate.platform, slate.sport)
     if rules.platform != slate.platform:
         raise LineupOptimizationError("roster rules platform does not match the slate")
     if rules.contest_format != slate.contest_format:
         raise LineupOptimizationError("roster rules format does not match the slate")
+    if rules.sport != slate.sport:
+        raise LineupOptimizationError("roster rules sport does not match the slate")
 
     projected_players = tuple(
         player

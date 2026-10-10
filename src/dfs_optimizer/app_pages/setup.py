@@ -15,6 +15,7 @@ from dfs_optimizer.app_ui import (
     summary_strip,
 )
 from dfs_optimizer.projections import build_platform_average_projections
+from dfs_optimizer.models import Sport
 from dfs_optimizer.services.projections import (
     build_historical_projections,
     download_historical_data,
@@ -77,7 +78,7 @@ apply_platform_theme(slate.platform)
 hero("Your slate is ready.", "We found the contest details. Confirm the projection setup below and continue to player review.")
 summary_strip(
     source_name,
-    f"{slate.platform.value.title()} · "
+    f"{slate.sport.value.upper()} · {slate.platform.value.title()} · "
     f"{slate.contest_format.value.replace('_', ' ').title()} · "
     f"{len(slate.games)} games · {len(slate.players)} players",
 )
@@ -102,6 +103,35 @@ action_guide(
     "Build this week’s projections",
     "The recommended historical model is selected for you. Confirm the detected week, then continue to player review.",
 )
+
+if slate.sport == Sport.CFB:
+    projections = build_platform_average_projections(slate)
+    projection_key = ("cfb-platform-average-v1", hash(slate))
+    if st.session_state.get("projection_key") != projection_key:
+        st.session_state["projection_built_at"] = datetime.now(timezone.utc)
+    st.session_state["projections"] = projections
+    st.session_state["projection_key"] = projection_key
+    st.session_state["player_context"] = ()
+    st.session_state["player_context_error"] = None
+    st.session_state["player_context_attempted"] = False
+    with st.container(border=True):
+        section_intro(
+            "College football baseline",
+            "This first version uses each platform’s supplied fantasy average. "
+            "It supports legal lineup construction, but it is not yet a matchup-adjusted forecast.",
+            icon=":material/sports_football:",
+        )
+        st.caption(
+            f"{len(projections)} players ready · CFB roster rules detected automatically"
+        )
+    if st.button(
+        "Review college players",
+        type="primary",
+        icon=":material/arrow_forward:",
+        width="stretch",
+    ):
+        st.switch_page("app_pages/build.py")
+    st.stop()
 
 method = "Historical forecast"
 cache_dir = "data/cache"

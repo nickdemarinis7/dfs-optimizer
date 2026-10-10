@@ -34,11 +34,8 @@ def lineups_csv_text(lineups, platform: Platform) -> str:
         raise ValueError("at least one lineup is required for export")
     output = io.StringIO(newline="")
     writer = csv.writer(output)
-    first_entries = lineups[0].entries
-    writer.writerow(
-        (first_entries[0].slot, "FLEX", "FLEX", "FLEX", "FLEX", "FLEX")
-        if hasattr(first_entries[0], "point_multiplier") else ROSTER_HEADERS
-    )
+    headers = _lineup_headers(lineups, platform)
+    writer.writerow(headers)
     for lineup in lineups:
         writer.writerow(
             _player_value(entry.player.name, getattr(entry, "platform_id", entry.player.platform_id), platform)
@@ -52,10 +49,14 @@ def merge_lineups_into_template(lineups, platform: Platform, template: bytes) ->
     if len(rows) < 2:
         raise ValueError("entry template must contain a header and at least one entry row")
     header = rows[0]
+    roster_headers = _lineup_headers(lineups, platform)
+    normalized_roster = tuple(_normalize_header(value) for value in roster_headers)
     start = next((
-        index for index in range(len(header) - len(ROSTER_HEADERS) + 1)
-        if tuple(header[index:index + 8]) == ROSTER_HEADERS[:8]
-        and header[index + 8].strip().upper() in {"D", "DEF", "DST"}
+        index for index in range(len(header) - len(roster_headers) + 1)
+        if tuple(
+            _normalize_header(value)
+            for value in header[index:index + len(roster_headers)]
+        ) == normalized_roster
     ), None)
     if start is None:
         raise ValueError("entry template does not contain the expected Classic roster columns")
@@ -64,13 +65,31 @@ def merge_lineups_into_template(lineups, platform: Platform, template: bytes) ->
     for row, lineup in zip(rows[1:], lineups, strict=False):
         if len(row) < len(header):
             row.extend([""] * (len(header) - len(row)))
-        row[start:start + len(ROSTER_HEADERS)] = [
+        row[start:start + len(roster_headers)] = [
             _player_value(entry.player.name, getattr(entry, "platform_id", entry.player.platform_id), platform)
             for entry in lineup.entries
         ]
     output = io.StringIO(newline="")
     csv.writer(output).writerows(rows)
     return output.getvalue().encode("utf-8")
+
+
+def _lineup_headers(lineups, platform: Platform) -> tuple[str, ...]:
+    first_entries = lineups[0].entries
+    if hasattr(first_entries[0], "point_multiplier"):
+        return (first_entries[0].slot, "FLEX", "FLEX", "FLEX", "FLEX", "FLEX")
+    if len(first_entries) == len(ROSTER_HEADERS):
+        return ROSTER_HEADERS
+    return tuple(
+        "Super FLEX" if entry.slot == "S-FLEX" and platform == Platform.FANDUEL
+        else entry.slot.rstrip("123")
+        for entry in first_entries
+    )
+
+
+def _normalize_header(value: str) -> str:
+    normalized = value.strip().upper().replace("SUPER FLEX", "S-FLEX")
+    return "DST" if normalized in {"D", "DEF", "DST"} else normalized
 
 
 def _player_value(name: str, player_id: str, platform: Platform) -> str:

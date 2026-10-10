@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .player import ContestFormat, Platform, Player
+from .player import ContestFormat, Platform, Player, Sport
 
 
 @dataclass(frozen=True, slots=True)
@@ -11,6 +11,7 @@ class Slate:
     contest_format: ContestFormat
     players: tuple[Player, ...]
     source_name: str
+    sport: Sport = Sport.NFL
 
     def __post_init__(self) -> None:
         if not self.players:
@@ -26,4 +27,3 @@ class Slate:
     @property
     def games(self) -> frozenset[str]:
         return frozenset(player.game for player in self.players)
-

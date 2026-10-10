@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from dfs_optimizer.models import ContestFormat, Platform, Projection
+from dfs_optimizer.models import ContestFormat, Platform, Projection, Sport
 from dfs_optimizer.optimization import (
     LineupEntry,
     OptimizedLineup,
@@ -26,6 +26,7 @@ class RunRecord:
     label: str
     created_at: datetime
     platform: Platform
+    sport: Sport
     contest_format: ContestFormat
     slate_id: str
     source_name: str
@@ -67,6 +68,7 @@ def list_run_records(directory: str | Path = "data/runs") -> tuple[RunRecord, ..
                 label=label,
                 created_at=created,
                 platform=Platform(manifest["platform"]),
+                sport=Sport(manifest.get("sport", "nfl")),
                 contest_format=ContestFormat(manifest["contest_format"]),
                 slate_id=manifest.get("slate_id", "legacy"),
                 source_name=manifest["salary_source"],
@@ -164,7 +166,11 @@ def restore_run(record: RunRecord):
                 multiplier = 1.5 if index == 0 else 1.0
                 salary = player.multiplier_salary if multiplier > 1 else player.salary
                 entries.append(SingleGameEntry(rows[0][index], player, projection, salary, multiplier))
-        rules = classic_rules_for(record.platform) if record.contest_format == ContestFormat.CLASSIC else single_game_rules_for(record.platform)
+        rules = (
+            classic_rules_for(record.platform, record.sport)
+            if record.contest_format == ContestFormat.CLASSIC
+            else single_game_rules_for(record.platform)
+        )
         lineups.append((OptimizedLineup if record.contest_format == ContestFormat.CLASSIC else OptimizedSingleGameLineup)(
             tuple(entries),
             sum(entry.player.salary if record.contest_format == ContestFormat.CLASSIC else entry.salary for entry in entries),

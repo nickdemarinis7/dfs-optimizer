@@ -40,6 +40,7 @@ class RunArchiveTests(unittest.TestCase):
             manifest = json.loads(archive.read("manifest.json"))
             self.assertEqual(manifest["settings"], {"preset": "test"})
             self.assertEqual(manifest["lineup_count"], 1)
+            self.assertEqual(manifest["sport"], "nfl")
             self.assertEqual(archive.read("salary/synthetic.csv"), b"salary-header\n")
 
     def test_persists_archive_with_stable_run_name(self) -> None:

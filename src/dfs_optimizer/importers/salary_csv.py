@@ -4,7 +4,7 @@ import csv
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from dfs_optimizer.models import ContestFormat, Platform, Player, Position, Slate
+from dfs_optimizer.models import ContestFormat, Platform, Player, Position, Slate, Sport
 
 
 class SalaryImportError(ValueError):
@@ -28,11 +28,22 @@ def import_salary_csv(path: str | Path) -> Slate:
         roster_values = {row.get("Roster Position", "") for row in rows}
         if roster_values == {"CPT", "FLEX"}:
             return _import_draftkings_single_game(rows, source.name)
-        return _import_draftkings(rows, source.name)
+        sport = (
+            Sport.CFB
+            if any("S-FLEX" in value.upper() for value in roster_values)
+            else Sport.NFL
+        )
+        return _import_draftkings(rows, source.name, sport=sport)
     if {"Id", "Nickname", "Team", "Opponent"}.issubset(headers):
         if "MVP 1.5x Salary" in headers:
             return _import_fanduel_single_game(rows, source.name)
-        return _import_fanduel(rows, source.name)
+        roster_values = {row.get("Roster Position", "") for row in rows}
+        sport = (
+            Sport.CFB
+            if any("SUPER FLEX" in value.upper() for value in roster_values)
+            else Sport.NFL
+        )
+        return _import_fanduel(rows, source.name, sport=sport)
     raise SalaryImportError(
         f"unrecognized salary file schema in {source}; headers were: "
         + ", ".join(sorted(header for header in headers if header))
@@ -40,7 +51,7 @@ def import_salary_csv(path: str | Path) -> Slate:
 
 
 def _import_draftkings(
-    rows: Iterable[Mapping[str, str]], source_name: str
+    rows: Iterable[Mapping[str, str]], source_name: str, *, sport: Sport = Sport.NFL
 ) -> Slate:
     players: list[Player] = []
     for row_number, row in enumerate(rows, start=2):
@@ -73,10 +84,13 @@ def _import_draftkings(
         contest_format=ContestFormat.CLASSIC,
         players=tuple(players),
         source_name=source_name,
+        sport=sport,
     )
 
 
-def _import_fanduel(rows: Iterable[Mapping[str, str]], source_name: str) -> Slate:
+def _import_fanduel(
+    rows: Iterable[Mapping[str, str]], source_name: str, *, sport: Sport = Sport.NFL
+) -> Slate:
     players: list[Player] = []
     for row_number, row in enumerate(rows, start=2):
         try:
@@ -107,6 +121,7 @@ def _import_fanduel(rows: Iterable[Mapping[str, str]], source_name: str) -> Slat
         contest_format=ContestFormat.CLASSIC,
         players=tuple(players),
         source_name=source_name,
+        sport=sport,
     )
 
 

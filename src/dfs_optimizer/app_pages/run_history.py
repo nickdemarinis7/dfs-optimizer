@@ -40,6 +40,7 @@ record_by_id = {item.run_id: item for item in records}
 label = lambda run_id: (
     f"{'Final · ' if record_by_id[run_id].is_final else ''}"
     f"{record_by_id[run_id].label} · "
+    f"{record_by_id[run_id].sport.value.upper()} · "
     f"{record_by_id[run_id].platform.value.title()} "
     f"{record_by_id[run_id].contest_format.value.replace('_', ' ').title()}"
 )

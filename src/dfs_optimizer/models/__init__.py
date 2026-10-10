@@ -1,4 +1,4 @@
-from .player import ContestFormat, Platform, Player, Position
+from .player import ContestFormat, Platform, Player, Position, Sport
 from .projection import Projection
 from .slate import Slate
 from .stat_line import (
@@ -21,4 +21,5 @@ __all__ = [
     "ProjectedKickerStats",
     "ProjectedOffensiveStats",
     "Slate",
+    "Sport",
 ]

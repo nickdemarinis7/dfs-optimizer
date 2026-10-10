@@ -12,6 +12,8 @@ __pycache__/
 .env.*
 .streamlit/secrets.toml
 samples/*contest-entry-history*.csv
+samples/cfb/*.csv
+!samples/cfb/.gitkeep
 lineups*.csv
 dist/
 build/

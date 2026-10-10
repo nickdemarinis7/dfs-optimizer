@@ -14,6 +14,11 @@ class ContestFormat(StrEnum):
     SINGLE_GAME = "single_game"
 
 
+class Sport(StrEnum):
+    NFL = "nfl"
+    CFB = "cfb"
+
+
 class Position(StrEnum):
     QB = "QB"
     RB = "RB"
@@ -22,12 +27,15 @@ class Position(StrEnum):
     DST = "DST"
     K = "K"
     FLEX = "FLEX"
+    SUPER_FLEX = "S-FLEX"
 
     @classmethod
     def from_platform_value(cls, value: str) -> Position:
         normalized = value.strip().upper()
         if normalized in {"D", "DEF", "DST"}:
             return cls.DST
+        if normalized in {"S-FLEX", "SUPER FLEX", "SUPERFLEX"}:
+            return cls.SUPER_FLEX
         return cls(normalized)
 
 
