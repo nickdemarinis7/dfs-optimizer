@@ -137,6 +137,38 @@ class CFBProjectionTests(unittest.TestCase):
         self.assertIn("AAA,BBB,55,-7", content)
         self.assertIn("BBB,AAA,55,7", content)
 
+    def test_consensus_ignores_future_cross_slate_matchups(self) -> None:
+        slate = Slate(
+            Platform.DRAFTKINGS,
+            ContestFormat.CLASSIC,
+            self.slate.players + (
+                Player(
+                    "qb2", "Other Quarterback", Position.QB,
+                    (Position.QB, Position.SUPER_FLEX), 7000,
+                    "BBB", "AAA", "AAA@BBB 10/10/2026 12:00PM ET",
+                    platform_average=10,
+                ),
+                Player(
+                    "qb3", "Third Quarterback", Position.QB,
+                    (Position.QB, Position.SUPER_FLEX), 6500,
+                    "CCC", "DDD", "CCC@DDD 10/10/2026 3:30PM ET",
+                    platform_average=10,
+                ),
+            ),
+            "DKSalaries-2026.csv",
+            Sport.CFB,
+        )
+        content, matched = cfb_consensus_lines_csv(
+            slate,
+            (
+                CFBConsensusLine("Alpha Tigers", "Beta Bears", 55, -7, 7),
+                CFBConsensusLine("Alpha Tigers", "Charlie Cats", 60, -3, 3),
+            ),
+            {"AAA": "Alpha", "BBB": "Beta", "CCC": "Charlie"},
+        )
+        self.assertEqual(matched, 1)
+        self.assertNotIn("CCC", content)
+
 
 if __name__ == "__main__":
     unittest.main()

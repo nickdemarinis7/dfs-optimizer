@@ -104,13 +104,26 @@ def cfb_consensus_lines_csv(
     writer.writerow(("team", "opponent", "game_total", "spread"))
     matched_games = 0
     slate_teams = {team.upper() for team in slate.teams}
+    slate_matchups = {
+        frozenset((player.team.upper(), player.opponent.upper()))
+        for player in slate.players
+        if player.team and player.opponent
+    }
+    written_matchups: set[frozenset[str]] = set()
     for line in lines:
         home = abbreviation(line.home_team)
         away = abbreviation(line.away_team)
-        if not home or not away or home not in slate_teams or away not in slate_teams:
+        matchup = frozenset((home, away)) if home and away else frozenset()
+        if (
+            not home or not away
+            or home not in slate_teams or away not in slate_teams
+            or matchup not in slate_matchups
+            or matchup in written_matchups
+        ):
             continue
         writer.writerow((home, away, line.game_total, line.home_spread))
         writer.writerow((away, home, line.game_total, line.away_spread))
+        written_matchups.add(matchup)
         matched_games += 1
     return output.getvalue(), matched_games
 
