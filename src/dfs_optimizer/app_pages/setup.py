@@ -5,6 +5,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from dfs_optimizer.data_sources import download_cfb_player_stats
 from dfs_optimizer.app_ui import (
     action_guide,
     apply_platform_theme,
@@ -22,6 +23,11 @@ from dfs_optimizer.services.projections import (
     historical_data_paths,
 )
 from dfs_optimizer.services.player_context import fetch_player_context
+from dfs_optimizer.services.cfb_projections import (
+    CFB_FORECAST_MODEL_VERSION,
+    build_cfb_projections,
+    infer_cfb_season,
+)
 from dfs_optimizer.services.slates import infer_slate_period, load_uploaded_salary_file
 
 
@@ -36,6 +42,11 @@ def _forecast(slate, season: int, week: int, cache_dir: str, model_version: str)
 @st.cache_data(ttl=30 * 60, max_entries=8, show_spinner=False)
 def _current_player_context(slate, cache_dir: str):
     return fetch_player_context(slate, cache_dir, max_age_hours=.5)
+
+
+@st.cache_data(ttl=6 * 3600, max_entries=8, show_spinner=False)
+def _cfb_forecast(slate, season: int, cache_dir: str, model_version: str):
+    return build_cfb_projections(slate, season, cache_dir)
 
 
 page_kicker(1, "Set up", home=False)
@@ -105,32 +116,101 @@ action_guide(
 )
 
 if slate.sport == Sport.CFB:
-    projections = build_platform_average_projections(slate)
-    projection_key = ("cfb-platform-average-v1", hash(slate))
-    if st.session_state.get("projection_key") != projection_key:
-        st.session_state["projection_built_at"] = datetime.now(timezone.utc)
-    st.session_state["projections"] = projections
-    st.session_state["projection_key"] = projection_key
     st.session_state["player_context"] = ()
     st.session_state["player_context_error"] = None
     st.session_state["player_context_attempted"] = False
+    season = infer_cfb_season(slate) or date.today().year
     with st.container(border=True):
         section_intro(
-            "College football baseline",
-            "This first version uses each platform’s supplied fantasy average. "
-            "It supports legal lineup construction, but it is not yet a matchup-adjusted forecast.",
+            "College football forecast",
+            "Recent player production is blended with the platform baseline, "
+            "workload trend, opponent performance, and scoring rules.",
             icon=":material/sports_football:",
         )
-        st.caption(
-            f"{len(projections)} players ready · CFB roster rules detected automatically"
+        season = int(st.number_input(
+            "Season", min_value=2013, max_value=2100, value=season,
+            help="The season used for current player game logs.",
+        ))
+        refresh_cfb = st.toggle(
+            "Refresh college data",
+            help="Download the latest public play-level data instead of using the six-hour cache.",
         )
+        st.caption(
+            "Current-season play data: cfbfastR / SportsDataverse. "
+            "Players without a reliable match keep the platform baseline."
+        )
+    projection_key = (
+        CFB_FORECAST_MODEL_VERSION, hash(slate), season,
+        str(Path("data/cache/cfb").expanduser()),
+    )
     if st.button(
-        "Review college players",
+        "Build CFB projections and review players",
         type="primary",
         icon=":material/arrow_forward:",
         width="stretch",
     ):
-        st.switch_page("app_pages/build.py")
+        try:
+            with st.status("Building college projections…", expanded=True) as status:
+                if refresh_cfb:
+                    status.write("Downloading current player history")
+                    download_cfb_player_stats(
+                        season, "data/cache/cfb", refresh=True
+                    )
+                    _cfb_forecast.clear()
+                status.write("Scoring recent form and matchup context")
+                projections = _cfb_forecast(
+                    slate, season, "data/cache/cfb", CFB_FORECAST_MODEL_VERSION
+                )
+                status.update(
+                    label="College projections ready",
+                    state="complete",
+                    expanded=False,
+                )
+            st.session_state["projections"] = projections
+            st.session_state["projection_key"] = projection_key
+            st.session_state["projection_built_at"] = datetime.now(timezone.utc)
+            st.switch_page("app_pages/build.py")
+        except (OSError, ValueError) as exc:
+            st.error(f"Could not build the CFB forecast: {exc}")
+    projections = (
+        st.session_state.get("projections", ())
+        if st.session_state.get("projection_key") == projection_key else ()
+    )
+    if projections:
+        platform_average_by_id = {
+            player.platform_id: player.platform_average for player in slate.players
+        }
+        adjusted = sum(
+            1 for projection in projections
+            if platform_average_by_id.get(projection.platform_id) is not None
+            and abs(
+                projection.projected_points
+                - platform_average_by_id[projection.platform_id]
+            ) >= .05
+        )
+        st.caption(
+            f"Ready · {len(projections)} college players projected · "
+            f"{adjusted} adjusted with current-season history"
+        )
+        if st.button(
+            "Review college players",
+            type="primary",
+            icon=":material/arrow_forward:",
+            width="stretch",
+        ):
+            st.switch_page("app_pages/build.py")
+    with st.container(border=True):
+        st.caption(
+            "If the public data source is temporarily unavailable, you can still build "
+            "a salary-average baseline."
+        )
+        if st.button("Use salary-average fallback", width="stretch"):
+            fallback = build_platform_average_projections(slate)
+            fallback_key = ("cfb-platform-average-v1", hash(slate))
+            st.session_state["projections"] = fallback
+            st.session_state["projection_key"] = fallback_key
+            st.session_state["projection_built_at"] = datetime.now(timezone.utc)
+            st.switch_page("app_pages/build.py")
     st.stop()
 
 method = "Historical forecast"

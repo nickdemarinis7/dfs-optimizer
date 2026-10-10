@@ -178,6 +178,12 @@ if slate.sport == Sport.NFL:
             st.session_state["player_context_error"] = str(exc)
             st.error("Player news could not be refreshed. Try again before lock.")
 else:
+    current_projection_key = st.session_state.get("projection_key") or ()
+    cfb_model = (
+        "recent-form forecast"
+        if current_projection_key and current_projection_key[0] == "cfb-recent-usage-v1"
+        else "platform-average baseline"
+    )
     with st.container(border=True):
         section_intro(
             "College player check",
@@ -188,8 +194,25 @@ else:
         questionable_count = len(prelock.questionable_player_ids)
         st.caption(
             f"{unavailable_count} unavailable · {questionable_count} injury watch · "
-            "platform-average baseline"
+            f"{cfb_model}"
         )
+        if cfb_model == "recent-form forecast":
+            platform_average_by_id = {
+                player.platform_id: player.platform_average
+                for player in slate.players
+            }
+            adjusted = sum(
+                1 for projection in projections
+                if platform_average_by_id.get(projection.platform_id) is not None
+                and abs(
+                    projection.projected_points
+                    - platform_average_by_id[projection.platform_id]
+                ) >= .05
+            )
+            st.caption(
+                f"{adjusted} players were adjusted using current-season game history; "
+                "unmatched players retain the platform baseline."
+            )
 
 if not player_context and st.session_state.get("player_context_error"):
     st.warning(
