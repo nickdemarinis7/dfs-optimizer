@@ -7,10 +7,8 @@ from pathlib import Path
 
 import streamlit as st
 
-from dfs_optimizer.data_sources import (
-    download_cfb_player_stats,
-    fetch_cfb_consensus_lines,
-)
+from dfs_optimizer.data_sources.cfb import download_cfb_player_stats
+from dfs_optimizer.data_sources.cfb_odds import fetch_cfb_consensus_lines
 from dfs_optimizer.app_ui import (
     action_guide,
     apply_platform_theme,

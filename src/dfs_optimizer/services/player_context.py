@@ -6,7 +6,7 @@ import re
 import unicodedata
 from zoneinfo import ZoneInfo
 
-from dfs_optimizer.data_sources import load_sleeper_players
+from dfs_optimizer.data_sources.sleeper import load_sleeper_players
 from dfs_optimizer.models import Position, Slate
 
 

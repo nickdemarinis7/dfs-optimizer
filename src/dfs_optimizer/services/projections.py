@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import tempfile
 
-from dfs_optimizer.data_sources import download_nflverse_season
+from dfs_optimizer.data_sources.nflverse import download_nflverse_season
 from dfs_optimizer.importers import apply_ownership_csv
 from dfs_optimizer.models import Projection, Slate
 from dfs_optimizer.projections import (

@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from dfs_optimizer.data_sources import download_nflverse_season
+from dfs_optimizer.data_sources.nflverse import download_nflverse_season
 from dfs_optimizer.exporters import export_lineups_csv
 from dfs_optimizer.importers import import_salary_csv, match_projections
 from dfs_optimizer.models import ContestFormat

@@ -10,7 +10,8 @@ import re
 import statistics
 import unicodedata
 
-from dfs_optimizer.data_sources import CFBConsensusLine, download_cfb_player_stats
+from dfs_optimizer.data_sources.cfb import download_cfb_player_stats
+from dfs_optimizer.data_sources.cfb_odds import CFBConsensusLine
 from dfs_optimizer.models import OffensiveStatLine, Player, Position, Projection, Slate, Sport
 from dfs_optimizer.rules import nfl_scoring_for
 
