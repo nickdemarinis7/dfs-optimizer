@@ -72,6 +72,19 @@ class PreflightTests(unittest.TestCase):
         self.assertFalse(report.blocking)
         self.assertTrue(any(item.code == "stale_salary_file" for item in report.findings))
 
+    def test_old_player_context_warns_without_blocking(self) -> None:
+        now = datetime.now(timezone.utc)
+        report = preflight_lineups(
+            self.slate, self.projections, self.lineups,
+            expected_lineups=1, projection_built_at=now,
+            player_context_built_at=now - timedelta(hours=1), now=now,
+        )
+
+        self.assertFalse(report.blocking)
+        self.assertTrue(any(
+            item.code == "stale_player_context" for item in report.findings
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()

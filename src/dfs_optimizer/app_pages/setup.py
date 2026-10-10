@@ -32,9 +32,9 @@ def _forecast(slate, season: int, week: int, cache_dir: str, model_version: str)
     return build_historical_projections(slate, season, week, cache_dir)
 
 
-@st.cache_data(ttl=12 * 3600, max_entries=8, show_spinner=False)
+@st.cache_data(ttl=30 * 60, max_entries=8, show_spinner=False)
 def _current_player_context(slate, cache_dir: str):
-    return fetch_player_context(slate, cache_dir)
+    return fetch_player_context(slate, cache_dir, max_age_hours=.5)
 
 
 page_kicker(1, "Set up", home=False)

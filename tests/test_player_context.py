@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime, timezone
 
 from dfs_optimizer.models import ContestFormat, Platform, Player, Position, Projection, Slate
-from dfs_optimizer.services.player_context import match_player_context
+from dfs_optimizer.services.player_context import (
+    match_player_context,
+    summarize_prelock_context,
+)
 from dfs_optimizer.services.risk import (
     suggest_default_excluded_player_ids,
     suggest_max_once_player_ids,
@@ -52,6 +56,51 @@ class PlayerContextTests(unittest.TestCase):
         self.assertIn("joe", excluded)
         self.assertIn("wr", limited)
         self.assertNotIn("dak", excluded)
+
+    def test_prelock_summary_identifies_role_and_start_time_risks(self) -> None:
+        timed_players = tuple(
+            Player(
+                player.platform_id,
+                player.name,
+                player.primary_position,
+                player.roster_positions,
+                player.salary,
+                player.team,
+                player.opponent,
+                "DAL@TB 10/09/2026 08:00PM ET",
+                status=player.status,
+            )
+            for player in self.players
+        )
+        slate = Slate(
+            Platform.FANDUEL,
+            ContestFormat.SINGLE_GAME,
+            timed_players,
+            "test.csv",
+        )
+        contexts = match_player_context(slate, {
+            "1": {
+                "full_name": "Dak Prescott", "team": "DAL",
+                "depth_chart_position": 1, "active": True,
+                "injury_status": "Questionable",
+            },
+            "2": {
+                "full_name": "Joe Milton III", "team": "DAL",
+                "depth_chart_position": 3, "active": True,
+            },
+        })
+
+        summary = summarize_prelock_context(
+            slate,
+            contexts,
+            now=datetime(2026, 10, 9, 22, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(summary.questionable_player_ids, frozenset({"dak"}))
+        self.assertEqual(summary.backup_quarterback_ids, frozenset({"joe"}))
+        self.assertEqual(summary.unmatched_player_ids, frozenset({"wr"}))
+        self.assertEqual(len(summary.games_starting_soon), 1)
+        self.assertEqual(summary.timed_games, 1)
 
 
 if __name__ == "__main__":

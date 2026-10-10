@@ -29,6 +29,10 @@ from dfs_optimizer.optimization import (
     generate_single_game_lineups,
 )
 from dfs_optimizer.services.projections import apply_uploaded_ownership
+from dfs_optimizer.services.player_context import (
+    fetch_player_context,
+    summarize_prelock_context,
+)
 from dfs_optimizer.services.risk import (
     suggest_default_excluded_player_ids,
     suggest_max_once_player_ids,
@@ -70,17 +74,110 @@ suggested_excluded = (
     & players.keys()
 )
 label = lambda pid: f"{players[pid].name} — {players[pid].team} {players[pid].primary_position.value}"
+
+
+def context_age_minutes() -> float | None:
+    checked_at = st.session_state.get("player_context_built_at")
+    if checked_at is None:
+        return None
+    if checked_at.tzinfo is None:
+        checked_at = checked_at.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - checked_at).total_seconds() / 60)
+
+
+def store_player_context(items) -> None:
+    st.session_state["player_context"] = tuple(items)
+    st.session_state["player_context_error"] = None
+    st.session_state["player_context_built_at"] = datetime.now(timezone.utc)
+    st.session_state["player_context_attempted"] = True
+
+
 action_guide(
     1,
     "Review flagged players",
     "Check the player table, then exclude anyone who is out or who you do not trust.",
 )
-if player_context:
-    st.caption(
-        f"Current role check matched {len(player_context)} of {len(players)} players · "
-        "depth-chart and injury signals are active"
+prelock = summarize_prelock_context(slate, player_context)
+age_minutes = context_age_minutes()
+with st.container(border=True):
+    section_intro(
+        "Pre-lock check",
+        "Current availability and role signals are checked again before optimization.",
+        icon=":material/health_and_safety:",
     )
-elif st.session_state.get("player_context_error"):
+    if age_minutes is not None:
+        freshness = "just now" if age_minutes < 1 else f"{age_minutes:.0f} minutes ago"
+        st.caption(
+            f"Player news checked {freshness} · {len(player_context)} matched · "
+            f"{len(prelock.unmatched_player_ids)} unmatched"
+        )
+        if age_minutes > 30:
+            st.warning(
+                "Player news is more than 30 minutes old. Refresh it before finalizing entries.",
+                icon=":material/update:",
+            )
+    if prelock.unavailable_player_ids:
+        st.markdown(
+            f":red-badge[{len(prelock.unavailable_player_ids)} unavailable] Automatically excluded"
+        )
+    if prelock.questionable_player_ids:
+        names = ", ".join(
+            sorted(players[player_id].name for player_id in prelock.questionable_player_ids if player_id in players)
+        )
+        st.markdown(f":orange-badge[{len(prelock.questionable_player_ids)} injury watch] {names}")
+    if prelock.backup_quarterback_ids:
+        names = ", ".join(
+            sorted(players[player_id].name for player_id in prelock.backup_quarterback_ids if player_id in players)
+        )
+        st.markdown(f":blue-badge[{len(prelock.backup_quarterback_ids)} backup QBs] {names}")
+    if prelock.unmatched_player_ids:
+        unmatched_names = sorted(
+            players[player_id].name
+            for player_id in prelock.unmatched_player_ids
+            if player_id in players
+        )
+        preview = ", ".join(unmatched_names[:6])
+        remainder = len(unmatched_names) - 6
+        st.caption(
+            "No live role match: " + preview
+            + (f" and {remainder} more" if remainder > 0 else "")
+            + ". Review these players manually."
+        )
+    if prelock.games_starting_soon:
+        st.warning(
+            f"{len(prelock.games_starting_soon)} game(s) start within three hours: "
+            + ", ".join(game.split(maxsplit=1)[0] for game in prelock.games_starting_soon),
+            icon=":material/schedule:",
+        )
+    elif prelock.timed_games < prelock.total_games:
+        st.caption(
+            f"Start times were available for {prelock.timed_games} of {prelock.total_games} games. "
+            "Confirm contest lock time on the platform."
+        )
+    if prelock.started_games:
+        st.error(
+            f"{len(prelock.started_games)} game(s) appear to have started. Do not submit players from locked games.",
+            icon=":material/lock_clock:",
+        )
+    if st.button(
+        "Refresh player news",
+        icon=":material/refresh:",
+        width="stretch",
+        key="refresh-player-context",
+    ):
+        try:
+            with st.spinner("Refreshing injuries and depth charts…"):
+                refreshed = fetch_player_context(slate, "data/cache", refresh=True)
+            store_player_context(refreshed)
+            st.session_state.pop(f"build-exclusions-{hash(slate)}", None)
+            st.session_state.pop(f"build-max-once-{hash(slate)}", None)
+            st.toast("Player news is current.", icon=":material/check_circle:")
+            st.rerun()
+        except (OSError, ValueError) as exc:
+            st.session_state["player_context_error"] = str(exc)
+            st.error("Player news could not be refreshed. Try again before lock.")
+
+if not player_context and st.session_state.get("player_context_error"):
     st.warning(
         "Current role data could not be refreshed. Historical safeguards are still active; review backups manually.",
         icon=":material/cloud_off:",
@@ -226,12 +323,20 @@ unavailable_statuses = {"IR", "O", "OUT"}
 
 def include_in_status_view(player) -> bool:
     status = (player.status or "").strip().upper()
+    context_flagged = player.platform_id in (
+        prelock.questionable_player_ids
+        | prelock.unavailable_player_ids
+        | prelock.backup_quarterback_ids
+    )
     if status_view == "Available":
-        return not status
+        return not status and not context_flagged
     if status_view == "Flagged":
-        return bool(status)
+        return bool(status) or context_flagged
     if status_view == "Unavailable":
-        return status in unavailable_statuses
+        return (
+            status in unavailable_statuses
+            or player.platform_id in prelock.unavailable_player_ids
+        )
     return True
 
 
@@ -331,14 +436,45 @@ if st.button(
 ):
     try:
         generation_warning = None
-        effective_limited_ids = limited_ids
+        live_context = player_context
+        live_age = context_age_minutes()
+        if live_age is None or live_age > 15:
+            with st.spinner("Running the final player-news check…"):
+                try:
+                    live_context = fetch_player_context(
+                        slate, "data/cache", max_age_hours=.25
+                    )
+                    store_player_context(live_context)
+                except (OSError, ValueError) as exc:
+                    st.session_state["player_context_error"] = str(exc)
+                    generation_warning = (
+                        "The final live player-news refresh failed, so the most recent "
+                        "available snapshot was used. Confirm player availability before lock."
+                    )
+        live_excluded = suggest_default_excluded_player_ids(
+            slate, tuple(projections), live_context
+        ) & players.keys()
+        newly_unsafe_locks = locked_ids & live_excluded
+        if newly_unsafe_locks:
+            names = ", ".join(sorted(players[player_id].name for player_id in newly_unsafe_locks))
+            raise RuntimeError(
+                f"The latest player news flagged a locked player: {names}. Refresh and review the player pool."
+            )
+        effective_excluded_ids = excluded_ids | live_excluded
+        live_limited = suggest_max_once_player_ids(
+            slate, tuple(projections), live_context
+        ) & players.keys()
+        effective_limited_ids = (
+            limited_ids | live_limited
+        ) - locked_ids - effective_excluded_ids
         effective_player_exposure = maximum_player_exposure
         matches = match_projections(slate, projections)
         with st.status("Optimizing portfolio…", expanded=True) as status:
             if slate.contest_format == ContestFormat.CLASSIC:
                 settings = ClassicOptimizationSettings(
-                    locked_player_ids=locked_ids, excluded_player_ids=excluded_ids,
-                    limited_player_ids=limited_ids,
+                    locked_player_ids=locked_ids,
+                    excluded_player_ids=effective_excluded_ids,
+                    limited_player_ids=effective_limited_ids,
                     qb_stack_size=1 if require_qb_stack else 0,
                     require_opponent_bring_back=require_qb_stack and require_bring_back,
                     ceiling_weight=.3, minimum_stack_projection=7 if require_qb_stack else 0,
@@ -378,8 +514,8 @@ if st.button(
                     maximum_players_per_team=maximum_players_per_team,
                     maximum_kickers_and_defenses=maximum_kickers_and_defenses,
                     maximum_dst_opponents=1, require_multiplier_receiver_qb=True,
-                    ceiling_weight=.3, excluded_player_ids=excluded_ids,
-                    limited_player_ids=limited_ids,
+                    ceiling_weight=.3, excluded_player_ids=effective_excluded_ids,
+                    limited_player_ids=effective_limited_ids,
                     ownership_penalty=.05 if ownership_coverage >= .75 else 0,
                 )
                 use_tuned_3max = (
@@ -419,7 +555,7 @@ if st.button(
                             if include_ceiling_lineup else None
                         ),
                     )
-                if len(lineups) != lineup_count and limited_ids:
+                if len(lineups) != lineup_count and effective_limited_ids:
                     effective_limited_ids = frozenset()
                     relaxed_settings = replace(
                         settings, limited_player_ids=effective_limited_ids
@@ -476,12 +612,18 @@ if st.button(
             "minimum_unique_players": minimum_unique,
             "maximum_player_exposure": effective_player_exposure,
             "locked_players": tuple(sorted(players[player_id].name for player_id in locked_ids)),
-            "excluded_players": tuple(sorted(players[player_id].name for player_id in excluded_ids)),
+            "excluded_players": tuple(sorted(
+                players[player_id].name for player_id in effective_excluded_ids
+            )),
             "automatic_exclusion_suggestions": tuple(sorted(
                 players[player_id].name for player_id in suggested_excluded
             )),
-            "player_context_coverage": len(player_context) / max(1, len(players)),
-            "player_context_source": "Sleeper daily player map" if player_context else None,
+            "player_context_coverage": len(live_context) / max(1, len(players)),
+            "player_context_source": "Sleeper daily player map" if live_context else None,
+            "player_context_checked_at": (
+                st.session_state["player_context_built_at"].isoformat()
+                if st.session_state.get("player_context_built_at") else None
+            ),
             "player_context": tuple(
                 {
                     "player": players[item.platform_id].name,
@@ -490,7 +632,7 @@ if st.button(
                     "practice_participation": item.practice_participation,
                     "active": item.active,
                 }
-                for item in player_context
+                for item in live_context
                 if item.platform_id in players
             ),
             "maximum_once_players": tuple(sorted(

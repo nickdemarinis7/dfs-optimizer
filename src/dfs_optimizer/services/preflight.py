@@ -31,6 +31,7 @@ def preflight_lineups(
     projection_built_at: datetime | None = None,
     salary_loaded_at: datetime | None = None,
     player_context: tuple[PlayerContext, ...] = (),
+    player_context_built_at: datetime | None = None,
     now: datetime | None = None,
 ) -> PreflightReport:
     """Independently validate the artifacts that will be submitted."""
@@ -135,6 +136,29 @@ def preflight_lineups(
             ))
         else:
             passed.append(f"Salary and status file is fresh ({salary_age:.1f} hours old)")
+
+    if player_context_built_at is None:
+        findings.append(AuditFinding(
+            "WARNING", "player_context_time_unknown",
+            "Live injury and depth-chart check time is unavailable. Refresh player news before lock.",
+        ))
+    else:
+        checked_at = player_context_built_at
+        if checked_at.tzinfo is None:
+            checked_at = checked_at.replace(tzinfo=timezone.utc)
+        context_current_time = now or datetime.now(timezone.utc)
+        context_age = max(
+            0.0, (context_current_time - checked_at).total_seconds() / 3600
+        )
+        if context_age > .5:
+            findings.append(AuditFinding(
+                "WARNING", "stale_player_context",
+                f"Player news was checked {context_age:.1f} hours ago. Refresh it before lock.",
+            ))
+        else:
+            passed.append(
+                f"Injury and depth-chart check is fresh ({context_age * 60:.0f} minutes old)"
+            )
 
     role_risks = suggest_default_excluded_player_ids(
         slate, projections, player_context

@@ -6,7 +6,13 @@ from .projections import (
     historical_data_paths,
 )
 from .risk import suggest_default_excluded_player_ids, suggest_max_once_player_ids
-from .player_context import PlayerContext, fetch_player_context, match_player_context
+from .player_context import (
+    PlayerContext,
+    PrelockSummary,
+    fetch_player_context,
+    match_player_context,
+    summarize_prelock_context,
+)
 from .results_review import (
     ResultsReview,
     ReviewedLineup,
@@ -42,8 +48,10 @@ __all__ = [
     "suggest_max_once_player_ids",
     "suggest_default_excluded_player_ids",
     "PlayerContext",
+    "PrelockSummary",
     "fetch_player_context",
     "match_player_context",
+    "summarize_prelock_context",
     "ResultsReview",
     "ReviewedLineup",
     "SubmittedEntry",

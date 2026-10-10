@@ -50,6 +50,7 @@ report = preflight_lineups(
     projection_built_at=st.session_state.get("projection_built_at"),
     salary_loaded_at=st.session_state.get("salary_loaded_at"),
     player_context=tuple(st.session_state.get("player_context", ())),
+    player_context_built_at=st.session_state.get("player_context_built_at"),
 )
 audit = report.findings
 stale = (
