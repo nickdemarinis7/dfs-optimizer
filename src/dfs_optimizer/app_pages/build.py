@@ -64,6 +64,7 @@ if slate is None or not projections:
 projection_by_id = {item.platform_id: item for item in projections}
 player_context = tuple(st.session_state.get("player_context", ()))
 context_by_id = {item.platform_id: item for item in player_context}
+cfb_game_environments = st.session_state.get("cfb_game_environments", {})
 default_unique = 3 if slate.contest_format == ContestFormat.CLASSIC else 2
 players = {p.platform_id: p for p in slate.players if p.platform_id in projection_by_id}
 suggested_max_once = suggest_max_once_player_ids(
@@ -221,6 +222,12 @@ else:
             st.caption(
                 f"Ownership leverage uses a slate-relative estimate for "
                 f"{ownership_count} players—not reported contest ownership."
+            )
+        if cfb_game_environments:
+            st.caption(
+                f"Betting context matched {len(cfb_game_environments)} teams from "
+                f"{st.session_state.get('cfb_lines_name') or 'the uploaded lines file'}. "
+                "Projection effects are capped at ±6%."
             )
         likely_backup_qbs = sorted(
             players[player_id].name
@@ -404,7 +411,7 @@ for player in players.values():
     if not include_in_status_view(player):
         continue
     projection = projection_by_id[player.platform_id]
-    pool_rows.append({
+    row = {
         "Player": player.name,
         "Pos": player.primary_position.value,
         "Team": player.team,
@@ -419,7 +426,18 @@ for player in players.values():
         "Est. own %": projection.projected_ownership,
         "Status": (player.status or "Available").upper(),
         "Role": context_by_id[player.platform_id].role_label if player.platform_id in context_by_id else "—",
-    })
+    }
+    if slate.sport == Sport.CFB:
+        environment = cfb_game_environments.get(player.team.upper())
+        row.update({
+            "Game total": environment.game_total if environment else None,
+            "Implied team": environment.implied_team_total if environment else None,
+            "Line adj. %": (
+                100 * (environment.projection_multiplier - 1)
+                if environment else None
+            ),
+        })
+    pool_rows.append(row)
 
 st.caption(f"{len(pool_rows)} players · switch the status filter to explore the slate")
 st.dataframe(
@@ -432,6 +450,12 @@ st.dataframe(
         "Est. own %": st.column_config.NumberColumn(
             format="%.1f%%",
             help="Estimated from this slate's salary, projection, value, ceiling, and position rank. It is not reported contest ownership.",
+        ),
+        "Game total": st.column_config.NumberColumn(format="%.1f"),
+        "Implied team": st.column_config.NumberColumn(format="%.1f"),
+        "Line adj. %": st.column_config.NumberColumn(
+            format="%.1f%%",
+            help="Projection adjustment from the team's implied score, capped at plus or minus 6%.",
         ),
     },
     width="stretch",
@@ -682,6 +706,17 @@ if st.button(
             "automatic_exclusion_suggestions": tuple(sorted(
                 players[player_id].name for player_id in suggested_excluded
             )),
+            "cfb_game_lines_source": (
+                st.session_state.get("cfb_lines_name")
+                if slate.sport == Sport.CFB else None
+            ),
+            "cfb_game_lines_team_coverage": (
+                len(cfb_game_environments) / max(1, len(slate.teams))
+                if slate.sport == Sport.CFB else None
+            ),
+            "cfb_game_lines_adjustment_cap": (
+                .06 if cfb_game_environments else None
+            ),
             "player_context_coverage": len(live_context) / max(1, len(players)),
             "player_context_source": "Sleeper daily player map" if live_context else None,
             "player_context_checked_at": (

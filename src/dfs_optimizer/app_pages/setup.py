@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+import hashlib
 from pathlib import Path
 
 import streamlit as st
@@ -25,6 +26,7 @@ from dfs_optimizer.services.projections import (
 from dfs_optimizer.services.player_context import fetch_player_context
 from dfs_optimizer.services.cfb_projections import (
     CFB_FORECAST_MODEL_VERSION,
+    apply_cfb_game_lines,
     build_cfb_projections,
     estimate_cfb_ownership,
     infer_cfb_season,
@@ -100,6 +102,7 @@ if st.button("Change salary file", icon=":material/swap_horiz:"):
         "projections", "projection_key", "projection_built_at", "player_context",
         "player_context_error", "player_context_built_at", "player_context_attempted",
         "ownership_hash", "lineups",
+        "cfb_game_environments", "cfb_lines_hash", "cfb_lines_name",
         "lineup_config_key", "run_archive", "run_archive_name", "saved_run_path",
         "current_run_id",
         "generation_warning",
@@ -140,9 +143,29 @@ if slate.sport == Sport.CFB:
             "Current-season play data: cfbfastR / SportsDataverse. "
             "Players without a reliable match keep the platform baseline."
         )
+    with st.container(border=True):
+        section_intro(
+            "Betting context",
+            "Optional. Add one row per team to account for expected game scoring. "
+            "The adjustment is capped at 6% and is shown during player review.",
+            icon=":material/monitoring:",
+        )
+        lines_upload = st.file_uploader(
+            "Game-lines CSV",
+            type="csv",
+            key=f"cfb-lines-upload-{hash(slate)}",
+            help="Columns: team, opponent, game_total, spread. Use the salary file's team abbreviations. Negative spread means the listed team is favored.",
+        )
+        st.caption(
+            "Format: team, opponent, game_total, spread · Example: OSU, MICH, 55.5, -7.5"
+        )
+    lines_content = lines_upload.getvalue() if lines_upload else None
+    lines_hash = (
+        hashlib.sha256(lines_content).hexdigest() if lines_content else None
+    )
     projection_key = (
         CFB_FORECAST_MODEL_VERSION, hash(slate), season,
-        str(Path("data/cache/cfb").expanduser()),
+        str(Path("data/cache/cfb").expanduser()), lines_hash,
     )
     if st.button(
         "Build CFB projections and review players",
@@ -162,6 +185,18 @@ if slate.sport == Sport.CFB:
                 projections = _cfb_forecast(
                     slate, season, "data/cache/cfb", CFB_FORECAST_MODEL_VERSION
                 )
+                if lines_content:
+                    status.write("Applying implied team totals")
+                    projections, environments = apply_cfb_game_lines(
+                        slate, projections, lines_content
+                    )
+                    st.session_state["cfb_game_environments"] = environments
+                    st.session_state["cfb_lines_hash"] = lines_hash
+                    st.session_state["cfb_lines_name"] = lines_upload.name
+                else:
+                    st.session_state["cfb_game_environments"] = {}
+                    st.session_state["cfb_lines_hash"] = None
+                    st.session_state["cfb_lines_name"] = None
                 status.update(
                     label="College projections ready",
                     state="complete",
@@ -209,10 +244,24 @@ if slate.sport == Sport.CFB:
             fallback = estimate_cfb_ownership(
                 slate, build_platform_average_projections(slate)
             )
-            fallback_key = ("cfb-platform-average-v2", hash(slate))
+            environments = {}
+            if lines_content:
+                try:
+                    fallback, environments = apply_cfb_game_lines(
+                        slate, fallback, lines_content
+                    )
+                except ValueError as exc:
+                    st.error(f"Could not apply the game lines: {exc}")
+                    st.stop()
+            fallback_key = ("cfb-platform-average-v2", hash(slate), lines_hash)
             st.session_state["projections"] = fallback
             st.session_state["projection_key"] = fallback_key
             st.session_state["projection_built_at"] = datetime.now(timezone.utc)
+            st.session_state["cfb_game_environments"] = environments
+            st.session_state["cfb_lines_hash"] = lines_hash
+            st.session_state["cfb_lines_name"] = (
+                lines_upload.name if lines_upload else None
+            )
             st.switch_page("app_pages/build.py")
     st.stop()
 

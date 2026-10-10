@@ -1,7 +1,7 @@
-# NFL DFS Optimizer
+# Football DFS Optimizer
 
-An NFL daily-fantasy lineup optimizer for DraftKings and FanDuel Classic and
-single-game contests.
+A daily-fantasy lineup optimizer for NFL and college football DraftKings and
+FanDuel Classic and single-game contests.
 
 The project currently imports and normalizes platform salary and projection
 files and defines the NFL Classic roster constraints for both platforms.
@@ -69,6 +69,21 @@ results are never used as projection inputs.
 The platform's fantasy-points average remains available as a clearly labeled
 fallback. It is useful for exercising roster constraints and exports, but it
 is not a forward-looking projection model.
+
+## College-football forecasts
+
+CFB projections blend the salary-file baseline with current-season cfbfastR
+player production, recent opportunity, and opponent performance. They also
+include a clearly labeled slate-relative ownership estimate. Players without a
+reliable history match retain the platform baseline.
+
+Optional betting context uses the format in `examples/cfb-game-lines.csv`:
+`team`, `opponent`, `game_total`, and `spread`. Use the salary file's team
+abbreviations and the sportsbook spread convention, where a negative number
+means the listed team is favored. The app derives an implied team total and
+applies a slate-relative projection adjustment capped at plus or minus 6%.
+Missing teams remain unchanged, and the uploaded source and coverage are saved
+with the generated run.
 
 ## Getting salary CSVs
 

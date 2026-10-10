@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import csv
 from collections import Counter, defaultdict
-from dataclasses import dataclass
-from dataclasses import replace
+from dataclasses import dataclass, replace
+import io
 import math
 from pathlib import Path
 import re
@@ -16,6 +16,16 @@ from dfs_optimizer.rules import nfl_scoring_for
 
 
 CFB_FORECAST_MODEL_VERSION = "cfb-recent-usage-v2"
+
+
+@dataclass(frozen=True, slots=True)
+class CFBGameEnvironment:
+    team: str
+    opponent: str | None
+    game_total: float
+    spread: float
+    implied_team_total: float
+    projection_multiplier: float
 
 
 @dataclass(slots=True)
@@ -284,6 +294,96 @@ def estimate_cfb_ownership(
         )
         for item in projections
     )
+
+
+def apply_cfb_game_lines(
+    slate: Slate,
+    projections: tuple[Projection, ...],
+    content: bytes | str,
+) -> tuple[tuple[Projection, ...], dict[str, CFBGameEnvironment]]:
+    """Apply conservative team-total adjustments from a team-level CSV.
+
+    Spread uses the sportsbook convention from the listed team's perspective:
+    negative means favored and positive means underdog. Adjustments are centered
+    on the median implied total for the uploaded slate and capped at +/- 6%.
+    """
+    text = content.decode("utf-8-sig") if isinstance(content, bytes) else content
+    reader = csv.DictReader(io.StringIO(text))
+    required = {"team", "game_total", "spread"}
+    missing = required - set(reader.fieldnames or ())
+    if missing:
+        raise ValueError(
+            "game-lines file is missing required columns: "
+            + ", ".join(sorted(missing))
+        )
+    rows: dict[str, tuple[str | None, float, float, float]] = {}
+    slate_teams = {player.team.upper() for player in slate.players}
+    for row_number, row in enumerate(reader, start=2):
+        team = (row.get("team") or "").strip().upper()
+        opponent = (row.get("opponent") or "").strip().upper() or None
+        if not team:
+            raise ValueError(f"game-lines row {row_number} has no team")
+        if team in rows:
+            raise ValueError(f"game-lines file contains duplicate team {team}")
+        try:
+            game_total = float(row.get("game_total") or "")
+            spread = float(row.get("spread") or "")
+        except ValueError as exc:
+            raise ValueError(
+                f"game-lines row {row_number} has an invalid total or spread"
+            ) from exc
+        if not 20 <= game_total <= 100:
+            raise ValueError(f"game total must be between 20 and 100 for {team}")
+        if not -60 <= spread <= 60:
+            raise ValueError(f"spread must be between -60 and 60 for {team}")
+        implied = game_total / 2 - spread / 2
+        if not 0 <= implied <= 80:
+            raise ValueError(f"implied team total is invalid for {team}")
+        rows[team] = (opponent, game_total, spread, implied)
+
+    matched = {team: values for team, values in rows.items() if team in slate_teams}
+    if not matched:
+        raise ValueError(
+            "no game-lines teams matched the salary file; use its team abbreviations"
+        )
+    median_implied = statistics.median(value[3] for value in matched.values())
+    if median_implied <= 0:
+        raise ValueError("game-lines file has no usable implied team totals")
+    environments = {
+        team: CFBGameEnvironment(
+            team=team,
+            opponent=opponent,
+            game_total=game_total,
+            spread=spread,
+            implied_team_total=implied,
+            projection_multiplier=min(
+                1.06, max(.94, 1 + .35 * (implied / median_implied - 1))
+            ),
+        )
+        for team, (opponent, game_total, spread, implied) in matched.items()
+    }
+    adjusted = []
+    for projection in projections:
+        environment = environments.get(projection.team.upper())
+        if environment is None:
+            adjusted.append(projection)
+            continue
+        multiplier = environment.projection_multiplier
+        adjusted.append(replace(
+            projection,
+            projected_points=round(projection.projected_points * multiplier, 3),
+            floor=_scaled(projection.floor, multiplier),
+            ceiling=_scaled(projection.ceiling, multiplier),
+            p10=_scaled(projection.p10, multiplier),
+            p25=_scaled(projection.p25, multiplier),
+            p75=_scaled(projection.p75, multiplier),
+            p90=_scaled(projection.p90, multiplier),
+        ))
+    return estimate_cfb_ownership(slate, tuple(adjusted)), environments
+
+
+def _scaled(value: float | None, multiplier: float) -> float | None:
+    return round(value * multiplier, 3) if value is not None else None
 
 
 def _percentile_ranks(values: dict[str, float]) -> dict[str, float]:

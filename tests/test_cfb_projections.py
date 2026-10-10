@@ -4,8 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from dfs_optimizer.models import ContestFormat, Platform, Player, Position, Slate, Sport
+from dfs_optimizer.models import ContestFormat, Platform, Player, Position, Projection, Slate, Sport
 from dfs_optimizer.services.cfb_projections import (
+    apply_cfb_game_lines,
     build_cfb_projections_from_file,
     estimate_cfb_ownership,
     infer_cfb_season,
@@ -63,8 +64,6 @@ class CFBProjectionTests(unittest.TestCase):
         self.assertEqual(infer_cfb_season(self.slate), 2026)
 
     def test_ownership_proxy_is_bounded_for_small_slates(self) -> None:
-        from dfs_optimizer.models import Projection
-
         estimates = estimate_cfb_ownership(self.slate, (
             Projection("Example Quarterback Jr.", "AAA", 24, platform_id="qb", p90=35),
             Projection("Unmatched Receiver", "AAA", 8, platform_id="wr", p90=12),
@@ -74,6 +73,43 @@ class CFBProjectionTests(unittest.TestCase):
             0 <= item.projected_ownership <= 55 for item in estimates
         ))
         self.assertEqual(by_id["qb"].projected_ownership, 55)
+
+    def test_game_lines_apply_capped_implied_total_adjustments(self) -> None:
+        slate = Slate(
+            Platform.DRAFTKINGS,
+            ContestFormat.CLASSIC,
+            self.slate.players + (
+                Player(
+                    "qb2", "Other Quarterback", Position.QB,
+                    (Position.QB, Position.SUPER_FLEX), 7000,
+                    "BBB", "AAA", "AAA@BBB 10/10/2026 12:00PM ET",
+                    platform_average=10,
+                ),
+            ),
+            "DKSalaries-2026.csv",
+            Sport.CFB,
+        )
+        adjusted, environments = apply_cfb_game_lines(
+            slate,
+            (
+                Projection("Example Quarterback Jr.", "AAA", 20, platform_id="qb", p90=30),
+                Projection("Other Quarterback", "BBB", 20, platform_id="qb2", p90=30),
+            ),
+            "team,opponent,game_total,spread\nAAA,BBB,60,-10\nBBB,AAA,60,10\n",
+        )
+        by_id = {item.platform_id: item for item in adjusted}
+        self.assertGreater(by_id["qb"].projected_points, 20)
+        self.assertLess(by_id["qb2"].projected_points, 20)
+        self.assertAlmostEqual(environments["AAA"].implied_team_total, 35)
+        self.assertLessEqual(environments["AAA"].projection_multiplier, 1.06)
+
+    def test_game_lines_require_salary_file_team_abbreviations(self) -> None:
+        with self.assertRaisesRegex(ValueError, "no game-lines teams matched"):
+            apply_cfb_game_lines(
+                self.slate,
+                (Projection("Example Quarterback Jr.", "AAA", 20, platform_id="qb"),),
+                "team,game_total,spread\nNOT-A-TEAM,50,-3\n",
+            )
 
 
 if __name__ == "__main__":

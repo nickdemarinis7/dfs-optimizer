@@ -38,6 +38,7 @@ from .slates import discover_salary_files, infer_slate_period, load_uploaded_sal
 
 __all__ = [
     "CFB_FORECAST_MODEL_VERSION",
+    "CFBGameEnvironment",
     "HistoricalDataPaths",
     "AuditFinding",
     "PortfolioDiagnostics",
@@ -45,6 +46,7 @@ __all__ = [
     "analyze_portfolio",
     "audit_lineups",
     "apply_uploaded_ownership",
+    "apply_cfb_game_lines",
     "build_historical_projections",
     "build_cfb_projections",
     "build_cfb_projections_from_file",
@@ -81,6 +83,8 @@ __all__ = [
 ]
 from .cfb_projections import (
     CFB_FORECAST_MODEL_VERSION,
+    CFBGameEnvironment,
+    apply_cfb_game_lines,
     build_cfb_projections,
     build_cfb_projections_from_file,
     estimate_cfb_ownership,
