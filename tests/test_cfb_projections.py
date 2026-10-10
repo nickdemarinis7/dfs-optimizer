@@ -8,9 +8,11 @@ from dfs_optimizer.models import ContestFormat, Platform, Player, Position, Proj
 from dfs_optimizer.services.cfb_projections import (
     apply_cfb_game_lines,
     build_cfb_projections_from_file,
+    cfb_consensus_lines_csv,
     estimate_cfb_ownership,
     infer_cfb_season,
 )
+from dfs_optimizer.data_sources import CFBConsensusLine
 
 
 class CFBProjectionTests(unittest.TestCase):
@@ -110,6 +112,30 @@ class CFBProjectionTests(unittest.TestCase):
                 (Projection("Example Quarterback Jr.", "AAA", 20, platform_id="qb"),),
                 "team,game_total,spread\nNOT-A-TEAM,50,-3\n",
             )
+
+    def test_matches_consensus_team_names_to_slate_abbreviations(self) -> None:
+        slate = Slate(
+            Platform.DRAFTKINGS,
+            ContestFormat.CLASSIC,
+            self.slate.players + (
+                Player(
+                    "qb2", "Other Quarterback", Position.QB,
+                    (Position.QB, Position.SUPER_FLEX), 7000,
+                    "BBB", "AAA", "AAA@BBB 10/10/2026 12:00PM ET",
+                    platform_average=10,
+                ),
+            ),
+            "DKSalaries-2026.csv",
+            Sport.CFB,
+        )
+        content, matched = cfb_consensus_lines_csv(
+            slate,
+            (CFBConsensusLine("Alpha Tigers", "Beta Bears", 55, -7, 7),),
+            {"AAA": "Alpha", "BBB": "Beta"},
+        )
+        self.assertEqual(matched, 1)
+        self.assertIn("AAA,BBB,55,-7", content)
+        self.assertIn("BBB,AAA,55,7", content)
 
 
 if __name__ == "__main__":

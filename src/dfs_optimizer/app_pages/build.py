@@ -229,6 +229,11 @@ else:
                 f"{st.session_state.get('cfb_lines_name') or 'the uploaded lines file'}. "
                 "Projection effects are capped at ±6%."
             )
+        elif st.session_state.get("cfb_odds_warning"):
+            st.warning(
+                st.session_state["cfb_odds_warning"],
+                icon=":material/cloud_off:",
+            )
         likely_backup_qbs = sorted(
             players[player_id].name
             for player_id in suggested_excluded

@@ -85,6 +85,18 @@ applies a slate-relative projection adjustment capped at plus or minus 6%.
 Missing teams remain unchanged, and the uploaded source and coverage are saved
 with the generated run.
 
+For automatic current lines, create a key with The Odds API and add it to
+Streamlit Community Cloud under **App settings → Secrets**:
+
+```toml
+THE_ODDS_API_KEY = "your-key"
+```
+
+The same value can be provided locally as an environment variable. Automatic
+requests use the NCAAF `spreads,totals` markets, calculate the median across
+available US bookmakers, and are cached for 15 minutes to conserve quota. A
+manually uploaded game-lines CSV takes precedence over the automatic feed.
+
 ## Getting salary CSVs
 
 The dependable workflow is semi-automated: download each slate's official CSV

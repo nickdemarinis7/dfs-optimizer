@@ -10,7 +10,7 @@ import re
 import statistics
 import unicodedata
 
-from dfs_optimizer.data_sources import download_cfb_player_stats
+from dfs_optimizer.data_sources import CFBConsensusLine, download_cfb_player_stats
 from dfs_optimizer.models import OffensiveStatLine, Player, Position, Projection, Slate, Sport
 from dfs_optimizer.rules import nfl_scoring_for
 
@@ -47,6 +47,72 @@ def infer_cfb_season(slate: Slate) -> int | None:
         if match := re.search(r"\b(20\d{2})\b", value):
             return int(match.group(1))
     return None
+
+
+def infer_cfb_team_names_from_file(
+    slate: Slate, source: str | Path
+) -> dict[str, str]:
+    """Infer salary abbreviation -> cfbfastR team name from matched players."""
+    players_by_name: dict[str, list[Player]] = defaultdict(list)
+    for player in slate.players:
+        players_by_name[_normalize(player.name)].append(player)
+    votes: dict[str, Counter[str]] = defaultdict(Counter)
+    with Path(source).open(encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            team = row.get("team", "")
+            if not team:
+                continue
+            names = {
+                _normalize(row.get(column, ""))
+                for column in (
+                    "completion_player", "rush_player", "reception_player",
+                    "target_player", "interception_thrown_player",
+                )
+                if _valid_name(row.get(column))
+            }
+            for normalized in names & players_by_name.keys():
+                for player in players_by_name[normalized]:
+                    votes[player.team.upper()][team] += 1
+    return {
+        abbreviation: counts.most_common(1)[0][0]
+        for abbreviation, counts in votes.items() if counts
+    }
+
+
+def cfb_consensus_lines_csv(
+    slate: Slate,
+    lines: tuple[CFBConsensusLine, ...],
+    team_names: dict[str, str],
+) -> tuple[str, int]:
+    """Match provider full names to slate teams and return the manual CSV format."""
+    abbreviation_by_school: dict[str, list[str]] = defaultdict(list)
+    for abbreviation, school in team_names.items():
+        abbreviation_by_school[_normalize_team(school)].append(abbreviation.upper())
+
+    def abbreviation(provider_name: str) -> str | None:
+        normalized = _normalize_team(provider_name)
+        candidates = {
+            value
+            for school, values in abbreviation_by_school.items()
+            if normalized.startswith(school) or school.startswith(normalized)
+            for value in values
+        }
+        return next(iter(candidates)) if len(candidates) == 1 else None
+
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(("team", "opponent", "game_total", "spread"))
+    matched_games = 0
+    slate_teams = {team.upper() for team in slate.teams}
+    for line in lines:
+        home = abbreviation(line.home_team)
+        away = abbreviation(line.away_team)
+        if not home or not away or home not in slate_teams or away not in slate_teams:
+            continue
+        writer.writerow((home, away, line.game_total, line.home_spread))
+        writer.writerow((away, home, line.game_total, line.away_spread))
+        matched_games += 1
+    return output.getvalue(), matched_games
 
 
 def build_cfb_projections(
@@ -447,6 +513,12 @@ def _normalize(value: str) -> str:
     ascii_name = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
     normalized = re.sub(r"[^a-z0-9]", "", ascii_name.casefold())
     return re.sub(r"(?:jr|sr|ii|iii|iv)$", "", normalized)
+
+
+def _normalize_team(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", unicodedata.normalize(
+        "NFKD", value
+    ).encode("ascii", "ignore").decode().casefold())
 
 
 def _percentile(values: list[float], probability: float) -> float:
