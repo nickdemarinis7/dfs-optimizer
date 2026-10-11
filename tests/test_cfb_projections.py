@@ -76,6 +76,46 @@ class CFBProjectionTests(unittest.TestCase):
         ))
         self.assertEqual(by_id["qb"].projected_ownership, 55)
 
+    def test_classic_ownership_scales_to_actual_cfb_roster_size(self) -> None:
+        estimates = estimate_cfb_ownership(self.slate, (
+            Projection("Example Quarterback Jr.", "AAA", 24, platform_id="qb", p90=35),
+            Projection("Unmatched Receiver", "AAA", 8, platform_id="wr", p90=12),
+        ))
+        # The cap makes a tiny synthetic slate unable to absorb all 800 points,
+        # but the assertion documents that DK CFB has eight—not nine—slots.
+        self.assertLessEqual(
+            sum(item.projected_ownership or 0 for item in estimates),
+            8 * 55,
+        )
+
+    def test_low_recent_skill_opportunity_is_treated_as_fragile(self) -> None:
+        player = Player(
+            "rb", "Low Usage Runner", Position.RB,
+            (Position.RB, Position.FLEX, Position.SUPER_FLEX), 4000,
+            "AAA", "BBB", "AAA@BBB 10/10/2026 12:00PM ET",
+            platform_average=10,
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.CLASSIC,
+            self.slate.players + (player,), "DKSalaries-2026.csv", Sport.CFB,
+        )
+        headers = (
+            "game_id,season,week,team,opponent,completion_player,completion_yds,"
+            "rush_player,rush_yds,reception_player,reception_yds,target_player,"
+            "interception_thrown_player,interception_thrown_stat,touchdown_player\n"
+        )
+        rows = (
+            "1,2026,1,Alpha,Beta,,,Low Usage Runner,8,,,,,,\n"
+            "2,2026,2,Alpha,Gamma,,,Low Usage Runner,6,,,,,,\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "stats.csv"
+            source.write_text(headers + rows, encoding="utf-8")
+            projections = build_cfb_projections_from_file(slate, source)
+        projection = next(item for item in projections if item.platform_id == "rb")
+        self.assertGreaterEqual(projection.bust_probability or 0, .55)
+        self.assertLessEqual(projection.p25 or 99, projection.projected_points * .35)
+
     def test_game_lines_apply_capped_implied_total_adjustments(self) -> None:
         slate = Slate(
             Platform.DRAFTKINGS,

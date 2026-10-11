@@ -4,7 +4,7 @@ from pathlib import Path
 import unittest
 
 from dfs_optimizer.importers import import_salary_csv
-from dfs_optimizer.models import ContestFormat, Platform, Player, Position, Projection, Slate
+from dfs_optimizer.models import ContestFormat, Platform, Player, Position, Projection, Slate, Sport
 from dfs_optimizer.services import suggest_max_once_player_ids
 from dfs_optimizer.services.risk import suggest_default_excluded_player_ids
 
@@ -13,6 +13,22 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PortfolioRiskTests(unittest.TestCase):
+    def test_cfb_fragile_skill_player_is_suggested_max_once(self) -> None:
+        player = Player(
+            "fragile", "Fragile Receiver", Position.WR,
+            (Position.WR, Position.FLEX), 4000, "AAA", "BBB", "AAA@BBB",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.CLASSIC, (player,), "test", Sport.CFB
+        )
+        suggestions = suggest_max_once_player_ids(slate, (
+            Projection(
+                player.name, player.team, 11, platform_id=player.platform_id,
+                floor=2, ceiling=25, bust_probability=.5,
+            ),
+        ))
+        self.assertIn(player.platform_id, suggestions)
+
     def test_only_suggests_usable_players_with_low_historical_floors(self) -> None:
         slate = import_salary_csv(ROOT / "samples" / "DKSalaries.csv")
         low_projection, low_floor, stable = slate.players[:3]

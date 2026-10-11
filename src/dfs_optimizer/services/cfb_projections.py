@@ -13,10 +13,10 @@ import unicodedata
 from dfs_optimizer.data_sources.cfb import download_cfb_player_stats
 from dfs_optimizer.data_sources.cfb_odds import CFBConsensusLine
 from dfs_optimizer.models import OffensiveStatLine, Player, Position, Projection, Slate, Sport
-from dfs_optimizer.rules import nfl_scoring_for
+from dfs_optimizer.rules import classic_rules_for, nfl_scoring_for
 
 
-CFB_FORECAST_MODEL_VERSION = "cfb-recent-usage-v2"
+CFB_FORECAST_MODEL_VERSION = "cfb-recent-usage-v3"
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,11 +269,20 @@ def build_cfb_projections_from_file(
             projected = recent_mean * (.45 + .35 * reliability) + platform_average * (.55 - .35 * reliability)
             season_opportunity = statistics.fmean(item[2] for item in observed)
             recent_opportunity = statistics.fmean(item[2] for item in observed[-2:])
-            if season_opportunity > 0:
-                projected *= min(
-                    1.10,
-                    max(.90, recent_opportunity / season_opportunity),
-                )
+            # CFB roles move quickly. For skill players, reward a sustained two-game
+            # opportunity increase while sharply discounting players who are barely
+            # seeing touches or targets. Quarterbacks are excluded because this feed
+            # does not expose pass attempts reliably enough to measure their workload.
+            if player.primary_position in {Position.RB, Position.WR, Position.TE}:
+                if season_opportunity > 0:
+                    projected *= min(
+                        1.18,
+                        max(.82, recent_opportunity / season_opportunity),
+                    )
+                if recent_opportunity < 2:
+                    projected *= .72
+                elif recent_opportunity < 4:
+                    projected *= .86
             values = [item[1] for item in observed]
             matchup = team_names.get(player.opponent)
             allowed = defense_points.get((matchup, player.primary_position), ())
@@ -286,6 +295,13 @@ def build_cfb_projections_from_file(
             p75 = max(projected, _percentile(values, .75))
             p90 = max(p75, _percentile(values, .90))
             bust = (sum(value < projected * .6 for value in values) + 1) / (len(values) + 3)
+            if (
+                player.primary_position in {Position.RB, Position.WR, Position.TE}
+                and recent_opportunity < 4
+            ):
+                p10 = min(p10, projected * .10)
+                p25 = min(p25, projected * .35)
+                bust = max(bust, .55 if recent_opportunity < 2 else .42)
         else:
             projected = platform_average
             p10, p25 = projected * .4, projected * .7
@@ -355,16 +371,18 @@ def estimate_cfb_ownership(
 
     raw = {
         item.platform_id: max(.02, math.exp(
-            2.50 * points[item.platform_id]
-            + 1.80 * values[item.platform_id]
-            + .50 * salaries[item.platform_id]
-            + 1.00 * ceilings[item.platform_id]
-            + .60 * position_scores[item.platform_id]
+            3.75 * points[item.platform_id]
+            + 2.70 * values[item.platform_id]
+            + .75 * salaries[item.platform_id]
+            + 1.50 * ceilings[item.platform_id]
+            + .90 * position_scores[item.platform_id]
         ))
         for item in eligible
     }
-    roster_slots = 6 if slate.contest_format.value == "single_game" else (
-        8 if slate.platform.value == "fanduel" else 9
+    roster_slots = (
+        6
+        if slate.contest_format.value == "single_game"
+        else classic_rules_for(slate.platform, slate.sport).lineup_size
     )
     ownership = _scale_with_cap(raw, roster_slots * 100.0, cap=55.0)
     return tuple(

@@ -341,7 +341,7 @@ if slate.sport == Sport.CFB:
                 except ValueError as exc:
                     st.error(f"Could not apply the game lines: {exc}")
                     st.stop()
-            fallback_key = ("cfb-platform-average-v2", hash(slate), lines_hash)
+            fallback_key = ("cfb-platform-average-v3", hash(slate), lines_hash)
             st.session_state["projections"] = fallback
             st.session_state["projection_key"] = fallback_key
             st.session_state["projection_built_at"] = datetime.now(timezone.utc)

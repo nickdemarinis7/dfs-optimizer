@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dfs_optimizer.models import Position, Projection, Slate
+from dfs_optimizer.models import Position, Projection, Slate, Sport
 from .player_context import PlayerContext
 
 
@@ -115,6 +115,21 @@ def suggest_max_once_player_ids(
         and projection.floor <= 1
         and 2 <= projection.projected_points < 10
     }
+    if slate.sport == Sport.CFB:
+        suggestions.update(
+            player.platform_id
+            for player in slate.players
+            if player.primary_position in {Position.RB, Position.WR, Position.TE}
+            and (projection := by_id.get(player.platform_id)) is not None
+            and projection.projected_points < 15
+            and (
+                (projection.bust_probability or 0) >= .42
+                or (
+                    projection.floor is not None
+                    and projection.floor <= projection.projected_points * .25
+                )
+            )
+        )
     context_by_id = {item.platform_id: item for item in contexts}
     suggestions.update(
         player.platform_id

@@ -182,7 +182,7 @@ else:
     current_projection_key = st.session_state.get("projection_key") or ()
     cfb_model = (
         "recent-form forecast"
-        if current_projection_key and current_projection_key[0] == "cfb-recent-usage-v2"
+        if current_projection_key and current_projection_key[0] == "cfb-recent-usage-v3"
         else "platform-average baseline"
     )
     with st.container(border=True):
@@ -561,6 +561,10 @@ if st.button(
             limited_ids | live_limited
         ) - locked_ids - effective_excluded_ids
         effective_player_exposure = maximum_player_exposure
+        effective_ownership_penalty = (
+            .025 if slate.sport == Sport.CFB and ownership_coverage >= .75
+            else .05 if ownership_coverage >= .75 else 0
+        )
         matches = match_projections(slate, projections)
         with st.status("Optimizing portfolio…", expanded=True) as status:
             if slate.contest_format == ContestFormat.CLASSIC:
@@ -568,6 +572,10 @@ if st.button(
                     locked_player_ids=locked_ids,
                     excluded_player_ids=effective_excluded_ids,
                     limited_player_ids=effective_limited_ids,
+                    fragile_player_ids=(
+                        live_limited if slate.sport == Sport.CFB else frozenset()
+                    ),
+                    maximum_fragile_players=2 if slate.sport == Sport.CFB else None,
                     qb_stack_size=1 if require_qb_stack else 0,
                     require_opponent_bring_back=require_qb_stack and require_bring_back,
                     ceiling_weight=.3, minimum_stack_projection=7 if require_qb_stack else 0,
@@ -575,10 +583,11 @@ if st.button(
                     minimum_stack_ceiling=12 if require_qb_stack else 0,
                     minimum_bring_back_ceiling=12 if require_qb_stack and require_bring_back else 0,
                     unique_primary_stacks=require_qb_stack,
-                    ownership_penalty=.05 if ownership_coverage >= .75 else 0,
+                    ownership_penalty=effective_ownership_penalty,
                 )
                 use_tuned_3max = (
-                    lineup_count == 3 and minimum_unique == 3
+                    slate.sport != Sport.CFB
+                    and lineup_count == 3 and minimum_unique == 3
                     and maximum_player_exposure == .67 and maximum_qb_exposure == .67
                     and maximum_dst_exposure == .34 and include_ceiling_lineup
                     and require_qb_stack and require_bring_back
@@ -592,7 +601,11 @@ if st.button(
                         maximum_qb_exposure=maximum_qb_exposure,
                         maximum_dst_exposure=maximum_dst_exposure,
                         lineup_ceiling_weights=(
-                            (*([.3] * (lineup_count - 1)), .7)
+                            (
+                                (.15, .40, .70)
+                                if slate.sport == Sport.CFB and lineup_count == 3
+                                else (*([.3] * (lineup_count - 1)), .7)
+                            )
                             if include_ceiling_lineup else None
                         ),
                     )
@@ -609,7 +622,7 @@ if st.button(
                     maximum_dst_opponents=1, require_multiplier_receiver_qb=True,
                     ceiling_weight=.3, excluded_player_ids=effective_excluded_ids,
                     limited_player_ids=effective_limited_ids,
-                    ownership_penalty=.05 if ownership_coverage >= .75 else 0,
+                    ownership_penalty=effective_ownership_penalty,
                 )
                 use_tuned_3max = (
                     lineup_count == 3 and minimum_unique == 2
@@ -700,7 +713,7 @@ if st.button(
                 )
             status.update(label="Portfolio ready", state="complete", expanded=False)
         lineup_settings = {
-            "strategy_version": "tournament-defaults-v2",
+            "strategy_version": "tournament-defaults-v3",
             "portfolio_mode": portfolio_label, "lineups": lineup_count,
             "minimum_unique_players": minimum_unique,
             "maximum_player_exposure": effective_player_exposure,
@@ -744,7 +757,16 @@ if st.button(
             )),
             "ceiling_lineup_number": lineup_count if include_ceiling_lineup else None,
             "ownership_coverage": ownership_coverage,
-            "ownership_penalty": .05 if ownership_coverage >= .75 else 0,
+            "ownership_penalty": effective_ownership_penalty,
+            "maximum_fragile_players_per_lineup": (
+                2 if slate.sport == Sport.CFB and slate.contest_format == ContestFormat.CLASSIC
+                else None
+            ),
+            "lineup_risk_profiles": (
+                ("balanced", "upside", "ceiling")
+                if slate.sport == Sport.CFB and lineup_count == 3 and include_ceiling_lineup
+                else None
+            ),
             "constraints_relaxed": bool(generation_warning),
         }
         if slate.contest_format == ContestFormat.CLASSIC:

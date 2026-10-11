@@ -19,6 +19,8 @@ class ClassicOptimizationSettings:
     locked_player_ids: frozenset[str] = frozenset()
     excluded_player_ids: frozenset[str] = frozenset()
     limited_player_ids: frozenset[str] = frozenset()
+    fragile_player_ids: frozenset[str] = frozenset()
+    maximum_fragile_players: int | None = None
     qb_stack_size: int = 0
     require_opponent_bring_back: bool = False
     avoid_dst_opponents: bool = True
@@ -35,6 +37,8 @@ class ClassicOptimizationSettings:
             raise ValueError("a player cannot be both locked and excluded")
         if self.locked_player_ids & self.limited_player_ids:
             raise ValueError("a locked player cannot be limited to one lineup")
+        if self.maximum_fragile_players is not None and self.maximum_fragile_players < 0:
+            raise ValueError("maximum_fragile_players cannot be negative")
         if self.qb_stack_size not in (0, 1, 2):
             raise ValueError("qb_stack_size must be 0, 1, or 2")
         if not 0 <= self.ceiling_weight <= 1:
@@ -364,6 +368,16 @@ def _optimize_classic_lineup(
     for player_index, player in enumerate(projected_players):
         if player.platform_id in settings.locked_player_ids:
             model.add(selected[player_index] == 1)
+
+    if settings.maximum_fragile_players is not None:
+        model.add(
+            sum(
+                selected[index]
+                for index, player in enumerate(projected_players)
+                if player.platform_id in settings.fragile_player_ids
+            )
+            <= settings.maximum_fragile_players
+        )
 
     pass_catcher_positions = {"WR", "TE"}
     offensive_positions = {"QB", "RB", "WR", "TE"}

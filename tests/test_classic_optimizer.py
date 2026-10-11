@@ -75,6 +75,22 @@ def make_slate(platform: Platform) -> tuple[Slate, ProjectionMatchResult]:
 
 
 class ClassicOptimizerTests(unittest.TestCase):
+    def test_limits_fragile_players_per_lineup(self) -> None:
+        slate, matches = make_slate(Platform.DRAFTKINGS)
+        fragile_ids = frozenset({"rb1", "wr1", "te1"})
+
+        lineup = optimize_classic_lineup(
+            slate,
+            matches,
+            settings=ClassicOptimizationSettings(
+                fragile_player_ids=fragile_ids,
+                maximum_fragile_players=1,
+            ),
+        )
+
+        selected_ids = {entry.player.platform_id for entry in lineup.entries}
+        self.assertLessEqual(len(selected_ids & fragile_ids), 1)
+
     def test_selects_three_lineups_as_a_joint_portfolio(self) -> None:
         slate, matches = make_slate(Platform.DRAFTKINGS)
         extra_specs = (
