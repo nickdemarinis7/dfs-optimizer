@@ -17,7 +17,7 @@ from dfs_optimizer.models import OffensiveStatLine, Player, Position, Projection
 from dfs_optimizer.rules import classic_rules_for, nfl_scoring_for
 
 
-CFB_FORECAST_MODEL_VERSION = "cfb-recent-usage-v4"
+CFB_FORECAST_MODEL_VERSION = "cfb-recent-usage-v5"
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,8 +64,10 @@ def infer_cfb_week(slate: Slate) -> int | None:
         return None
     kickoff = min(kickoff_dates)
     september_first = date(kickoff.year, 9, 1)
-    first_week_saturday = september_first - timedelta(
-        days=(september_first.weekday() - 5) % 7
+    # cfbfastR's regular-season Week 1 begins with the first Saturday on or
+    # after September 1. Games before that are its preseason/Week 0 window.
+    first_week_saturday = september_first + timedelta(
+        days=(5 - september_first.weekday()) % 7
     )
     return max(1, (kickoff - first_week_saturday).days // 7 + 1)
 

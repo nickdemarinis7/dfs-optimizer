@@ -361,7 +361,7 @@ if slate.sport == Sport.CFB:
                     st.error(f"Could not apply the game lines: {exc}")
                     st.stop()
             fallback_key = (
-                "cfb-platform-average-v4", hash(slate), target_week, lines_hash
+                "cfb-platform-average-v5", hash(slate), target_week, lines_hash
             )
             st.session_state["projections"] = fallback
             st.session_state["projection_key"] = fallback_key

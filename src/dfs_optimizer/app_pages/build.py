@@ -182,7 +182,7 @@ else:
     current_projection_key = st.session_state.get("projection_key") or ()
     cfb_model = (
         "recent-form forecast"
-        if current_projection_key and current_projection_key[0] == "cfb-recent-usage-v4"
+        if current_projection_key and current_projection_key[0] == "cfb-recent-usage-v5"
         else "platform-average baseline"
     )
     with st.container(border=True):

@@ -67,7 +67,8 @@ class CFBProjectionTests(unittest.TestCase):
         self.assertEqual(infer_cfb_season(self.slate), 2026)
 
     def test_infers_week_from_slate_kickoff(self) -> None:
-        self.assertEqual(infer_cfb_week(self.slate), 7)
+        # cfbfastR labels the October 10, 2026 slate as Week 6.
+        self.assertEqual(infer_cfb_week(self.slate), 6)
 
     def test_excludes_target_week_and_later_results(self) -> None:
         headers = (
