@@ -15,6 +15,7 @@ from dfs_optimizer.app_ui import (
     section_intro,
 )
 from dfs_optimizer.exporters import lineups_csv_text, merge_lineups_into_template
+from dfs_optimizer.models import ContestFormat, Position
 from dfs_optimizer.services.portfolio import analyze_portfolio
 from dfs_optimizer.services.preflight import preflight_lineups
 from dfs_optimizer.services.run_archive import build_run_archive
@@ -27,13 +28,64 @@ from dfs_optimizer.services.submissions import (
 )
 
 
+def _lineup_story(lineup, contest_format: ContestFormat) -> str:
+    """Describe the lineup construction in plain language."""
+    if contest_format == ContestFormat.CLASSIC:
+        quarterback = next(
+            (
+                entry.player
+                for entry in lineup.entries
+                if entry.player.primary_position == Position.QB
+            ),
+            None,
+        )
+        parts = []
+        if quarterback is not None:
+            partners = [
+                entry.player.name
+                for entry in lineup.entries
+                if entry.player.team == quarterback.team
+                and entry.player.primary_position in {Position.WR, Position.TE}
+            ]
+            bring_backs = [
+                entry.player.name
+                for entry in lineup.entries
+                if entry.player.team == quarterback.opponent
+                and entry.player.primary_position in {Position.RB, Position.WR, Position.TE}
+            ]
+            if partners:
+                parts.append(f"{quarterback.name} paired with {', '.join(partners)}")
+            if bring_backs:
+                parts.append(f"bring-back: {', '.join(bring_backs)}")
+        tight_ends = [
+            entry.player.name
+            for entry in lineup.entries
+            if entry.player.primary_position == Position.TE
+        ]
+        if len(tight_ends) > 1:
+            parts.append(f"two-TE build: {', '.join(tight_ends)}")
+        return " · ".join(parts) or "Balanced projection-first construction"
+
+    multiplier = next(
+        (
+            entry
+            for entry in lineup.entries
+            if not entry.slot.upper().startswith("FLEX")
+        ),
+        lineup.entries[0],
+    )
+    team_counts = Counter(entry.player.team for entry in lineup.entries)
+    split = "–".join(str(count) for _, count in team_counts.most_common())
+    return f"{multiplier.slot}: {multiplier.player.name} · {split} team split"
+
+
 slate = st.session_state.get("slate")
 projections = st.session_state.get("projections", ())
 lineups = st.session_state.get("lineups", ())
 if slate is not None:
     apply_platform_theme(slate.platform)
 page_kicker(3, "Review")
-hero("Your lineups are ready.", "Review each lineup, download the entry file, then upload it to your contest site.")
+hero("Portfolio ready.", "Review the construction and risk, then download the entry file for your contest site.")
 if slate is None or not projections or not lineups:
     st.warning("Generate a portfolio on the Build lineups screen first.", icon=":material/arrow_back:")
     st.stop()
@@ -62,6 +114,16 @@ if stale:
     st.warning(
         "These results are stale because player decisions changed. Regenerate before exporting.",
         icon=":material/update:",
+    )
+if blocking:
+    st.error(
+        "Action required before download. Review the pre-submit findings below.",
+        icon=":material/report:",
+    )
+else:
+    st.success(
+        f"Ready to submit · {len(lineups)} lineup{'s' if len(lineups) != 1 else ''} passed the blocking checks.",
+        icon=":material/verified:",
     )
 action_guide(
     1,
@@ -98,6 +160,9 @@ ceiling = sum(
 with st.container(border=True):
     st.subheader(role)
     st.caption(lineup_scenario.label)
+    st.markdown(
+        f"**Construction** · {_lineup_story(lineup, slate.contest_format)}"
+    )
     top_metrics = st.columns(2)
     top_metrics[0].metric("Median", f"{lineup.projected_points:.2f}")
     top_metrics[1].metric("Ceiling", f"{ceiling:.2f}")
@@ -117,49 +182,6 @@ with st.container(border=True):
         * getattr(entry, "point_multiplier", 1),
         "Status": entry.player.status or "",
     } for entry in lineup.entries]), width="stretch", hide_index=True)
-
-optional_label("Deeper analysis")
-with st.container(border=True):
-    section_intro(
-        "Portfolio exposure",
-        "Exposure shows how often each player appears across your entries. High exposure means more risk is concentrated in that player.",
-        icon=":material/donut_large:",
-    )
-    for warning in diagnostics.warnings:
-        st.warning(warning)
-    counts = Counter(e.player.name for lineup in lineups for e in lineup.entries)
-    st.dataframe(pd.DataFrame([{"Player": name, "Appearances": count, "Exposure": 100 * count / len(lineups)} for name, count in counts.most_common()]), width="stretch", hide_index=True)
-
-with st.container(border=True):
-    section_intro(
-        "Simulated game scripts",
-        "These simulations estimate upside and how often each lineup leads your portfolio; they are ranges, not guarantees.",
-        icon=":material/casino:",
-    )
-    st.caption(
-        "Two thousand correlated simulations using shared game, team, passing, and rushing factors."
-    )
-    st.dataframe(
-        pd.DataFrame([
-            {
-                "Lineup": item.lineup_number,
-                "Game script": item.label,
-                "Mean": item.mean,
-                "P75": item.p75,
-                "P90": item.p90,
-                "Lead rate": item.top_rate,
-            }
-            for item in scenario_analysis
-        ]),
-        column_config={
-            "Mean": st.column_config.NumberColumn(format="%.2f"),
-            "P75": st.column_config.NumberColumn(format="%.2f"),
-            "P90": st.column_config.NumberColumn(format="%.2f"),
-            "Lead rate": st.column_config.NumberColumn(format="percent"),
-        },
-        hide_index=True,
-        width="stretch",
-    )
 
 with st.container(border=True):
     section_intro(
@@ -215,6 +237,58 @@ with st.container(border=True):
             "This run is available in Run history for the current browser session. "
             "Download the complete run package for durable storage."
         )
+
+optional_label("Optional portfolio analysis")
+exposure_tab, simulation_tab = st.tabs([
+    ":material/donut_large: Exposure",
+    ":material/casino: Simulations",
+])
+with exposure_tab:
+    st.caption(
+        "Exposure shows how often each player appears across your entries. "
+        "High exposure means more risk is concentrated in that player."
+    )
+    for warning in diagnostics.warnings:
+        st.warning(warning)
+    counts = Counter(e.player.name for lineup in lineups for e in lineup.entries)
+    st.dataframe(
+        pd.DataFrame([
+            {
+                "Player": name,
+                "Appearances": count,
+                "Exposure": 100 * count / len(lineups),
+            }
+            for name, count in counts.most_common()
+        ]),
+        width="stretch",
+        hide_index=True,
+    )
+with simulation_tab:
+    st.caption(
+        "Two thousand correlated simulations estimate upside and how often each "
+        "lineup leads this portfolio; they are ranges, not guarantees."
+    )
+    st.dataframe(
+        pd.DataFrame([
+            {
+                "Lineup": item.lineup_number,
+                "Game script": item.label,
+                "Mean": item.mean,
+                "P75": item.p75,
+                "P90": item.p90,
+                "Lead rate": item.top_rate,
+            }
+            for item in scenario_analysis
+        ]),
+        column_config={
+            "Mean": st.column_config.NumberColumn(format="%.2f"),
+            "P75": st.column_config.NumberColumn(format="%.2f"),
+            "P90": st.column_config.NumberColumn(format="%.2f"),
+            "Lead rate": st.column_config.NumberColumn(format="percent"),
+        },
+        hide_index=True,
+        width="stretch",
+    )
 
 action_guide(
     3,

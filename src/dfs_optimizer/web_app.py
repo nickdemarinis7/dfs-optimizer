@@ -8,7 +8,7 @@ from dfs_optimizer.app_ui import apply_app_style
 
 
 st.set_page_config(
-    page_title="NFL Lineup Studio",
+    page_title="Lineup Studio",
     page_icon=":material/sports_football:",
     layout="centered",
     initial_sidebar_state="collapsed",

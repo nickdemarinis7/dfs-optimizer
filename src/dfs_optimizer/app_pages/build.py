@@ -57,7 +57,7 @@ projections = st.session_state.get("projections", ())
 if slate is not None:
     apply_platform_theme(slate.platform)
 page_kicker(2, "Build")
-hero("Review, then build.", "Check the players who need attention. The recommended tournament settings are already filled in.")
+hero("Make the final calls.", "Review the players who need attention, adjust the recommended strategy if needed, and generate your portfolio.")
 if slate is None or not projections:
     st.warning("Build projections on the Slate & projections screen first.", icon=":material/arrow_back:")
     st.stop()
@@ -102,12 +102,24 @@ def store_player_context(items) -> None:
     st.session_state["player_context_attempted"] = True
 
 
+prelock = summarize_prelock_context(slate, player_context)
+attention_ids = (
+    prelock.questionable_player_ids
+    | prelock.unavailable_player_ids
+    | prelock.backup_quarterback_ids
+    | prelock.subordinate_skill_player_ids
+)
+summary_strip(
+    f"{len(attention_ids)} player{'s' if len(attention_ids) != 1 else ''} need review",
+    f"{len(prelock.unavailable_player_ids)} unavailable · "
+    f"{len(prelock.questionable_player_ids)} injury watch · "
+    f"{len(prelock.subordinate_skill_player_ids)} role risk",
+)
 action_guide(
     1,
     "Review flagged players",
     "Check the player table, then exclude anyone who is out or who you do not trust.",
 )
-prelock = summarize_prelock_context(slate, player_context)
 age_minutes = context_age_minutes()
 if slate.sport == Sport.NFL:
   with st.container(border=True):
@@ -559,7 +571,7 @@ if limited_ids:
     strategy_parts.append(f"{len(limited_ids)} max-once players")
 if ownership_coverage >= .75:
     strategy_parts.append("ownership leverage")
-st.caption(" · ".join(strategy_parts))
+summary_strip("Strategy ready", " · ".join(strategy_parts))
 
 action_guide(
     2,
@@ -582,10 +594,14 @@ st.session_state["current_config_key"] = config_key
 if st.session_state.get("lineups") and st.session_state.get("lineup_config_key") != config_key:
     st.warning("Existing results are stale. Generate again before exporting.", icon=":material/update:")
 
-if st.button(
-    f"Generate {lineup_count} lineup{'s' if lineup_count != 1 else ''} and review",
-    type="primary", icon=":material/bolt:", width="stretch",
-):
+with st.bottom:
+    generate_clicked = st.button(
+        f"Generate {lineup_count} lineup{'s' if lineup_count != 1 else ''} and review",
+        type="primary", icon=":material/bolt:", width="stretch",
+        key="generate-lineups-primary",
+    )
+
+if generate_clicked:
     try:
         generation_warning = None
         live_context = player_context

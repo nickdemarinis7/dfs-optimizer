@@ -19,7 +19,7 @@ if slate is not None:
 
 page_kicker(None, "Run history")
 hero(
-    "Runs from this session.",
+    "Your saved runs.",
     "Compare early-week and game-day portfolios while this browser session is active. Download important snapshots for permanent storage.",
 )
 action_guide(

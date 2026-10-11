@@ -12,6 +12,7 @@ from dfs_optimizer.data_sources.cfb_odds import fetch_cfb_consensus_lines
 from dfs_optimizer.app_ui import (
     action_guide,
     apply_platform_theme,
+    feature_strip,
     hero,
     optional_label,
     page_kicker,
@@ -95,7 +96,8 @@ source_name = st.session_state.get("source_name")
 salary_content = st.session_state.get("salary_content")
 
 if slate is None:
-    hero("Start with your slate.", "Upload one official salary file. We’ll detect the site and contest, then guide you through the rest.")
+    hero("Build lineups with a reason.", "Upload one official salary file. Lineup Studio will identify the slate, build role-aware projections, and guide you to a contest-ready portfolio.")
+    feature_strip("NFL + CFB", "DraftKings + FanDuel", "Classic + Showdown")
     action_guide(
         1,
         "Upload a salary CSV",
@@ -120,13 +122,11 @@ if slate is None:
             st.session_state["salary_loaded_at"] = datetime.now(timezone.utc)
             st.rerun()
 
-    if st.button("Open a previous run", icon=":material/history_toggle_off:"):
-        st.switch_page("app_pages/run_history.py")
-    st.caption("After upload, this screen will confirm your slate and show one button to continue.")
+    st.caption("After upload, we’ll confirm the slate and show one clear next step. Saved portfolios are available from Runs above.")
     st.stop()
 
 apply_platform_theme(slate.platform)
-hero("Your slate is ready.", "We found the contest details. Confirm the projection setup below and continue to player review.")
+hero("Slate confirmed.", "Review the detected contest and projection inputs, then continue to the decisions that matter.")
 summary_strip(
     source_name,
     f"{slate.sport.value.upper()} · {slate.platform.value.title()} · "

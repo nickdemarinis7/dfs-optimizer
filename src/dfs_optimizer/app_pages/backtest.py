@@ -31,8 +31,8 @@ if slate is not None:
 
 page_kicker(None, "Backtest")
 hero(
-    "How did they finish?",
-    "Drop in the contest standings after it ends. We’ll find your generated lineups and grade the run automatically.",
+    "Grade the slate.",
+    "Upload the final standings to measure lineup performance and projection accuracy against what actually happened.",
 )
 action_guide(
     1,
