@@ -209,6 +209,58 @@ if results_file is not None:
                 hide_index=True,
                 width="stretch",
             )
+            if projection_metrics.ownership_samples:
+                st.caption("Ownership calibration")
+                with st.container(horizontal=True):
+                    st.metric(
+                        "Players matched",
+                        projection_metrics.ownership_samples,
+                        border=True,
+                    )
+                    st.metric(
+                        "Ownership MAE",
+                        f"{projection_metrics.ownership_mean_absolute_error:.2f}%",
+                        border=True,
+                    )
+                    st.metric(
+                        "Ownership bias",
+                        f"{projection_metrics.ownership_mean_error:+.2f}%",
+                        border=True,
+                    )
+                    st.metric(
+                        "Ownership correlation",
+                        (
+                            f"{projection_metrics.ownership_correlation:.2f}"
+                            if projection_metrics.ownership_correlation is not None
+                            else "—"
+                        ),
+                        border=True,
+                    )
+                ownership_frame = pd.DataFrame([
+                    {
+                        "Player": row.name,
+                        "Pos": row.position,
+                        "Projected ownership": row.projected_ownership,
+                        "Actual ownership": row.actual_ownership,
+                        "Ownership error": row.projected_ownership - row.actual_ownership,
+                    }
+                    for row in evaluation_rows
+                    if row.projected_ownership is not None
+                    and row.actual_ownership is not None
+                ]).sort_values(
+                    "Ownership error", key=lambda values: values.abs(), ascending=False
+                )
+                st.dataframe(
+                    ownership_frame,
+                    column_config={
+                        column: st.column_config.NumberColumn(format="%.2f%%")
+                        for column in (
+                            "Projected ownership", "Actual ownership", "Ownership error"
+                        )
+                    },
+                    hide_index=True,
+                    width="stretch",
+                )
             result_hash = hashlib.sha256(results_file.getvalue()).hexdigest()
             run_id = st.session_state.get("current_run_id") or f"results-{result_hash[:12]}"
             record = calibration_record(
@@ -254,6 +306,7 @@ if records:
                 "Bias": item["projection_metrics"]["bias"],
                 "Correlation": item["projection_metrics"]["correlation"],
                 "Coverage": item["projection_metrics"]["interval_coverage"],
+                "Ownership MAE": item["projection_metrics"].get("ownership_mae"),
                 "Best top %": item.get("best_top_percent"),
             }
             for item in records
@@ -265,6 +318,7 @@ if records:
                 "Bias": st.column_config.NumberColumn(format="%+.2f"),
                 "Correlation": st.column_config.NumberColumn(format="%.2f"),
                 "Coverage": st.column_config.NumberColumn(format="percent"),
+                "Ownership MAE": st.column_config.NumberColumn(format="%.2f%%"),
                 "Best top %": st.column_config.NumberColumn(format="%.2f%%"),
             },
             hide_index=True,

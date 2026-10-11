@@ -323,7 +323,9 @@ projection, P90 is the tournament ceiling, and bust probability is the share of
 recent outcomes at or below half the current median projection (with a two-point
 minimum threshold). The Backtest screen extracts unmultiplied player outcomes
 from final standings and reports MAE, RMSE, bias, correlation, interval coverage,
-position-level error, and the largest individual misses.
+position-level error, and the largest individual misses. When projected ownership
+is available, it also reports ownership MAE, bias, correlation, and the largest
+player-level ownership misses.
 
 Each completed Backtest also creates a downloadable calibration record and, on
 a writable local deployment, stores it under `data/calibration/`. The history

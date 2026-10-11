@@ -36,8 +36,8 @@ class ContestResultTests(unittest.TestCase):
 class ProjectionMetricTests(unittest.TestCase):
     def test_calculates_errors_and_correlation(self) -> None:
         projections = (
-            Projection("A", "AAA", 10, floor=8, ceiling=14),
-            Projection("B", "BBB", 20, floor=17, ceiling=19),
+            Projection("A", "AAA", 10, floor=8, ceiling=14, projected_ownership=12),
+            Projection("B", "BBB", 20, floor=17, ceiling=19, projected_ownership=18),
         )
         actuals = (
             PlayerResult("A", "WR", 10, 12),
@@ -51,6 +51,10 @@ class ProjectionMetricTests(unittest.TestCase):
         self.assertEqual(metrics.mean_error, 1)
         self.assertEqual(metrics.interval_coverage, 0.5)
         self.assertEqual(metrics.ceiling_exceed_rate, 0)
+        self.assertEqual(metrics.ownership_samples, 2)
+        self.assertEqual(metrics.ownership_mean_absolute_error, 2)
+        self.assertEqual(metrics.ownership_mean_error, 0)
+        self.assertEqual(metrics.ownership_correlation, 1)
 
     def test_extracts_unmultiplied_showdown_player_results(self) -> None:
         csv_text = (

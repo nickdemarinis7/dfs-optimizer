@@ -18,6 +18,10 @@ class ProjectionMetrics:
     range_samples: int = 0
     interval_coverage: float | None = None
     ceiling_exceed_rate: float | None = None
+    ownership_samples: int = 0
+    ownership_mean_absolute_error: float | None = None
+    ownership_mean_error: float | None = None
+    ownership_correlation: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +34,8 @@ class ProjectionEvaluationRow:
     absolute_error: float
     floor: float | None
     ceiling: float | None
+    projected_ownership: float | None = None
+    actual_ownership: float | None = None
 
 
 def evaluate_projections(
@@ -43,6 +49,14 @@ def evaluate_projections(
     correlation = _correlation(
         [row.projected for row in rows], [row.actual for row in rows]
     )
+    ownership_rows = [
+        row for row in rows
+        if row.projected_ownership is not None and row.actual_ownership is not None
+    ]
+    ownership_errors = [
+        row.projected_ownership - row.actual_ownership
+        for row in ownership_rows
+    ]
     return ProjectionMetrics(
         matched_players=len(rows),
         mean_absolute_error=sum(abs(error) for error in errors) / len(errors),
@@ -57,6 +71,22 @@ def evaluate_projections(
         ceiling_exceed_rate=(
             sum(row.actual > row.ceiling for row in ranged) / len(ranged)
             if ranged else None
+        ),
+        ownership_samples=len(ownership_rows),
+        ownership_mean_absolute_error=(
+            sum(abs(error) for error in ownership_errors) / len(ownership_errors)
+            if ownership_errors else None
+        ),
+        ownership_mean_error=(
+            sum(ownership_errors) / len(ownership_errors)
+            if ownership_errors else None
+        ),
+        ownership_correlation=(
+            _correlation(
+                [row.projected_ownership for row in ownership_rows],
+                [row.actual_ownership for row in ownership_rows],
+            )
+            if ownership_rows else None
         ),
     )
 
@@ -83,6 +113,8 @@ def evaluate_projection_rows(
             absolute_error=abs(error),
             floor=projection.floor,
             ceiling=projection.ceiling,
+            projected_ownership=projection.projected_ownership,
+            actual_ownership=actual.drafted_percent,
         ))
     return tuple(rows)
 

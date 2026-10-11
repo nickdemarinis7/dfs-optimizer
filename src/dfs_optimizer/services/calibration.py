@@ -49,6 +49,10 @@ def calibration_record(
             "range_samples": metrics.range_samples,
             "interval_coverage": metrics.interval_coverage,
             "ceiling_exceed_rate": metrics.ceiling_exceed_rate,
+            "ownership_samples": metrics.ownership_samples,
+            "ownership_mae": metrics.ownership_mean_absolute_error,
+            "ownership_bias": metrics.ownership_mean_error,
+            "ownership_correlation": metrics.ownership_correlation,
         },
         "position_metrics": position_metrics,
     }

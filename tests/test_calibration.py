@@ -34,6 +34,7 @@ class CalibrationLedgerTests(unittest.TestCase):
         self.assertEqual(len(saved), 1)
         self.assertEqual(saved[0]["run_id"], "run-1")
         self.assertEqual(saved[0]["projection_metrics"]["mae"], 2)
+        self.assertEqual(saved[0]["projection_metrics"]["ownership_samples"], 0)
         self.assertEqual(saved[0]["position_metrics"]["WR"]["players"], 2)
 
 
