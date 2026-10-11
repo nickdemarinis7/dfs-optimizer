@@ -52,6 +52,32 @@ class ResultsReviewTests(unittest.TestCase):
                 slate.contest_format,
             )
 
+    def test_draftkings_cfb_classic_recognizes_super_flex(self) -> None:
+        names = (
+            "Quarterback One", "Runner One", "Runner Two", "Receiver One",
+            "Receiver Two", "Receiver Three", "Flex Player", "Super Quarterback",
+        )
+        lineup = SimpleNamespace(entries=tuple(
+            SimpleNamespace(player=SimpleNamespace(name=name)) for name in names
+        ))
+        output = io.StringIO(newline="")
+        writer = csv.writer(output)
+        writer.writerow(("Rank", "EntryId", "EntryName", "Points", "Lineup"))
+        writer.writerow((
+            1, "mine", "nick_demarinis", 200,
+            "QB Quarterback One RB Runner One RB Runner Two "
+            "WR Receiver One WR Receiver Two WR Receiver Three "
+            "FLEX Flex Player S-FLEX Super Quarterback",
+        ))
+
+        review = review_contest_results(
+            output.getvalue().encode(), "results.csv", (lineup,),
+            Platform.DRAFTKINGS, ContestFormat.CLASSIC,
+        )
+
+        self.assertEqual(review.lineups[0].score, 200)
+        self.assertFalse(review.unmatched_lineups)
+
     def test_fanduel_single_game_preserves_mvp_role_and_finds_actual_entries(self) -> None:
         names = ("Alpha One", "Bravo Two", "Charlie Three", "Delta Four", "Echo Five", "Foxtrot Six")
         lineup = SimpleNamespace(entries=tuple(

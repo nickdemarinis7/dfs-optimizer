@@ -192,7 +192,7 @@ def _field_lineup_key(value: str, platform: Platform, contest_format: ContestFor
             return (("MVP", names[0]), *(('FLEX', name) for name in sorted(names[1:])))
         return tuple(sorted(names))
     markers = list(re.finditer(
-        r"(?:^|\s{1,2})(CPT|FLEX|QB|RB|WR|TE|DST)\s+", value.strip()
+        r"(?:^|\s{1,2})(CPT|S-FLEX|FLEX|QB|RB|WR|TE|DST)\s+", value.strip()
     ))
     parsed = []
     for index, marker in enumerate(markers):
