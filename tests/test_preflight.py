@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from dfs_optimizer.models import Platform
 from dfs_optimizer.optimization import generate_classic_lineups
-from dfs_optimizer.services import preflight_lineups
+from dfs_optimizer.services import PlayerContext, preflight_lineups
 from test_classic_optimizer import make_slate
 
 
@@ -111,6 +111,30 @@ class PreflightTests(unittest.TestCase):
         self.assertFalse(report.blocking)
         self.assertTrue(any(
             item.code == "stale_player_context" for item in report.findings
+        ))
+
+    def test_repeated_backup_tight_end_exposure_warns(self) -> None:
+        tight_end = next(
+            entry.player for entry in self.lineups[0].entries
+            if entry.player.primary_position.value == "TE"
+        )
+        now = datetime.now(timezone.utc)
+
+        report = preflight_lineups(
+            self.slate,
+            self.projections,
+            (self.lineups[0], self.lineups[0]),
+            expected_lineups=2,
+            player_context=(PlayerContext(
+                tight_end.platform_id, 2, None, None, True,
+            ),),
+            player_context_built_at=now,
+            now=now,
+        )
+
+        self.assertTrue(any(
+            item.code == "subordinate_skill_exposure"
+            for item in report.findings
         ))
 
 

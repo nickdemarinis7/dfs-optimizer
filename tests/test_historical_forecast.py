@@ -6,7 +6,11 @@ from pathlib import Path
 
 from dfs_optimizer.models import ContestFormat, Platform, Player, Position, Slate
 from dfs_optimizer.projections import forecast_from_nflverse
-from dfs_optimizer.projections.historical import _normalize, _role_trend_factor
+from dfs_optimizer.projections.historical import (
+    _normalize,
+    _role_trend_factor,
+    _snap_role_trend_factor,
+)
 
 
 class HistoricalForecastTests(unittest.TestCase):
@@ -99,7 +103,7 @@ class HistoricalForecastTests(unittest.TestCase):
 
             self.assertEqual(offense, ())
 
-    def test_role_trend_is_bounded_and_ignores_absence_only_samples(self) -> None:
+    def test_role_trend_detects_reduced_role_and_ignores_absence_only_samples(self) -> None:
         declining = [
             {"carries": "7", "targets": "3"},
             {"carries": "6", "targets": "2"},
@@ -107,8 +111,35 @@ class HistoricalForecastTests(unittest.TestCase):
         ]
         injury_absence = [{}, {}, {"carries": "0", "targets": "9"}]
 
-        self.assertEqual(_role_trend_factor(Position.RB, declining), 0.75)
+        self.assertAlmostEqual(_role_trend_factor(Position.RB, declining), 0.375)
         self.assertEqual(_role_trend_factor(Position.WR, injury_absence), 1.0)
+
+    def test_mayer_style_spot_starts_do_not_survive_role_loss(self) -> None:
+        current_games = [
+            {"targets": "1"},
+            {"targets": "1"},
+            {"targets": "3"},
+            {"targets": "4"},
+            {"targets": "7"},
+        ]
+
+        self.assertLessEqual(
+            _role_trend_factor(Position.TE, current_games),
+            0.25,
+        )
+
+    def test_snap_share_confirms_role_loss_but_not_injury_absence(self) -> None:
+        role_loss = [
+            {"offense_pct": ".18"},
+            {"offense_pct": ".22"},
+            {"offense_pct": ".75"},
+            {"offense_pct": ".81"},
+            {"offense_pct": ".78"},
+        ]
+        injury_absence = [{}, {}, {"offense_pct": ".80"}]
+
+        self.assertLess(_snap_role_trend_factor(role_loss), .30)
+        self.assertEqual(_snap_role_trend_factor(injury_absence), 1.0)
 
 
 if __name__ == "__main__":

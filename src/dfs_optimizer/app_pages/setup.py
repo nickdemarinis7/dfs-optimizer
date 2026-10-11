@@ -23,9 +23,11 @@ from dfs_optimizer.models import Sport
 from dfs_optimizer.services.projections import (
     build_historical_projections,
     download_historical_data,
+    historical_data_coverage,
     historical_data_paths,
 )
 from dfs_optimizer.services.player_context import fetch_player_context
+from dfs_optimizer.services.role_adjustments import apply_current_role_adjustments
 from dfs_optimizer.services.cfb_projections import (
     CFB_FORECAST_MODEL_VERSION,
     apply_cfb_game_lines,
@@ -39,7 +41,7 @@ from dfs_optimizer.services.cfb_projections import (
 from dfs_optimizer.services.slates import infer_slate_period, load_uploaded_salary_file
 
 
-FORECAST_MODEL_VERSION = "outcome-distributions-v5"
+FORECAST_MODEL_VERSION = "returning-starter-v8"
 
 
 @st.cache_data(max_entries=8, show_spinner=False)
@@ -120,7 +122,8 @@ summary_strip(
 if st.button("Change salary file", icon=":material/swap_horiz:"):
     for key in (
         "slate", "source_name", "salary_content", "salary_loaded_at", "salary-upload",
-        "projections", "projection_key", "projection_built_at", "player_context",
+        "projections", "base_projections", "role_adjustments", "projection_key",
+        "projection_built_at", "historical_data_health", "player_context",
         "player_context_error", "player_context_built_at", "player_context_attempted",
         "ownership_hash", "lineups",
         "cfb_game_environments", "cfb_lines_hash", "cfb_lines_name", "cfb_target_week",
@@ -280,7 +283,10 @@ if slate.sport == Sport.CFB:
                     state="complete",
                     expanded=False,
                 )
+            st.session_state["base_projections"] = projections
             st.session_state["projections"] = projections
+            st.session_state["role_adjustments"] = ()
+            st.session_state["historical_data_health"] = {}
             st.session_state["projection_key"] = projection_key
             st.session_state["projection_built_at"] = datetime.now(timezone.utc)
             st.session_state["cfb_target_week"] = target_week
@@ -363,7 +369,10 @@ if slate.sport == Sport.CFB:
             fallback_key = (
                 "cfb-platform-average-v5", hash(slate), target_week, lines_hash
             )
+            st.session_state["base_projections"] = fallback
             st.session_state["projections"] = fallback
+            st.session_state["role_adjustments"] = ()
+            st.session_state["historical_data_health"] = {}
             st.session_state["projection_key"] = fallback_key
             st.session_state["projection_built_at"] = datetime.now(timezone.utc)
             st.session_state["cfb_target_week"] = target_week
@@ -392,11 +401,10 @@ with st.container(border=True):
     )
 
 if method == "Salary-file average":
-    projections = build_platform_average_projections(slate)
+    base_projections = build_platform_average_projections(slate)
     projection_key = ("salary-average", hash(slate))
     if st.session_state.get("projection_key") != projection_key:
         st.session_state["projection_built_at"] = datetime.now(timezone.utc)
-    st.session_state["projections"] = projections
     st.session_state["projection_key"] = projection_key
     if not st.session_state.get("player_context_attempted"):
         st.session_state["player_context_attempted"] = True
@@ -406,6 +414,13 @@ if method == "Salary-file average":
             st.session_state["player_context_built_at"] = datetime.now(timezone.utc)
         except (OSError, ValueError) as exc:
             st.session_state["player_context_error"] = str(exc)
+    projections, role_adjustments = apply_current_role_adjustments(
+        slate, base_projections, tuple(st.session_state.get("player_context", ()))
+    )
+    st.session_state["base_projections"] = base_projections
+    st.session_state["projections"] = projections
+    st.session_state["role_adjustments"] = role_adjustments
+    st.session_state["historical_data_health"] = {}
     st.caption("Salary-file averages are a fallback and are not forward-looking weekly projections.")
 else:
     inferred = infer_slate_period(slate, Path(cache_dir).expanduser() / "games.csv")
@@ -423,10 +438,22 @@ else:
             season = int(controls[0].number_input("Season", 2000, 2100, season))
             week = int(controls[1].number_input("Week", 1, 22, week))
             paths = historical_data_paths(season, cache_dir)
+            data_is_stale = paths.age_hours is None or paths.age_hours > 12
             refresh = st.toggle(
-                "Refresh historical data", value=bool(paths.missing),
-                help="Downloads the newest completed-game history before projections are built.",
+                "Refresh historical data", value=bool(paths.missing) or data_is_stale,
+                help=(
+                    "Downloads the newest completed-game history before projections are built. "
+                    "This defaults on when the local data is more than 12 hours old."
+                ),
             )
+            if paths.age_hours is not None:
+                st.caption(f"Historical files updated {paths.age_hours:.1f} hours ago")
+            coverage = historical_data_coverage(paths, season)
+            if coverage.stats_week is not None or coverage.snap_week is not None:
+                st.caption(
+                    f"Available through · stats Week {coverage.stats_week or '—'} · "
+                    f"snaps Week {coverage.snap_week or '—'}"
+                )
     else:
         st.caption("Choose the week because it could not be detected from the salary file.")
         controls = st.columns(2)
@@ -453,6 +480,7 @@ else:
                 projections = _forecast(
                     slate, season, week, cache_dir, FORECAST_MODEL_VERSION
                 )
+                base_projections = projections
                 status.write("Checking current injuries and depth charts")
                 try:
                     st.session_state["player_context_attempted"] = True
@@ -463,8 +491,24 @@ else:
                 except (OSError, ValueError) as exc:
                     st.session_state["player_context"] = ()
                     st.session_state["player_context_error"] = str(exc)
+                projections, role_adjustments = apply_current_role_adjustments(
+                    slate,
+                    base_projections,
+                    tuple(st.session_state.get("player_context", ())),
+                )
+                coverage = historical_data_coverage(
+                    historical_data_paths(season, cache_dir), season
+                )
                 status.update(label="Projections ready", state="complete", expanded=False)
+            st.session_state["base_projections"] = base_projections
             st.session_state["projections"] = projections
+            st.session_state["role_adjustments"] = role_adjustments
+            st.session_state["historical_data_health"] = {
+                "season": season,
+                "target_week": week,
+                "stats_week": coverage.stats_week,
+                "snap_week": coverage.snap_week,
+            }
             st.session_state["projection_key"] = projection_key
             st.session_state["projection_built_at"] = datetime.now(timezone.utc)
             st.switch_page("app_pages/build.py")

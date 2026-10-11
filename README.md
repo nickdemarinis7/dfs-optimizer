@@ -183,10 +183,12 @@ is ambiguous, the app requires an explicit week selection instead of silently
 defaulting to Week 1.
 
 `forecast_from_nflverse` ingests nflverse weekly player stats, weekly team
-stats, and game results. It uses only regular-season games before the requested
-target week and calculates recency-weighted expected stats and bonus/tier hit
-probabilities. The default uses the last eight games with a four-game half-life.
-Downloaded inputs belong in `data/cache/`, which is excluded from Git.
+stats, offensive snap shares, and game results. It uses only regular-season
+games before the requested target week and calculates recency-weighted expected
+stats and bonus/tier hit probabilities. Snap data is bounded by the provider's
+latest published week so publication lag cannot look like zero participation.
+The default uses the last eight games with a four-game half-life. Downloaded
+inputs belong in `data/cache/`, which is excluded from Git.
 
 Download the current and prior seasons, forecast a target week, and optimize:
 
@@ -251,9 +253,17 @@ backup look like value. The 3-max preset also requires an opponent bring-back
 to project for at least seven points. Searchable lock/exclude controls remain
 available for late depth-chart and injury news that historical data cannot see.
 For players with activity in multiple current-season games, opportunity volume
-also receives a bounded 0.75x–1.15x trend adjustment based on the two most
-recent games. Missing games alone do not trigger this adjustment, which avoids
-automatically treating an injury absence as a lost role.
+uses the two most recent games against the earlier active-role baseline. A
+sustained drop in touches, targets, or offensive snap share can reduce the role
+to 0.20x; pure zero-game absences remain neutral so an injury is not
+automatically treated as a demotion. Live Sleeper context uses
+`depth_chart_order` for the actual role rank. TE2 and deeper tight ends, plus
+RB3/WR3 and deeper players, are flagged and capped at one lineup by default.
+When a healthy starter is currently ahead of them, the pre-lock layer also
+reduces TE2+ projections to 65% and RB3/WR3+ projections to 75%. Player review
+shows the multiplier and its reason, and each saved run records the original
+and adjusted projections. The app also reports the newest available stats and
+snap-count weeks so stale model inputs are visible before generation.
 
 The 3-max preset also requires stack partners and bring-backs to have at least
 a 12-point historical ceiling. Every unlocked player is capped at two of the

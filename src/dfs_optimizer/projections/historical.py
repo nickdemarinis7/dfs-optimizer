@@ -20,12 +20,15 @@ def forecast_from_nflverse(
     target_week: int,
     games_used: int = 8,
     half_life_games: float = 4,
+    snap_files: tuple[str | Path, ...] = (),
 ) -> tuple[tuple[PlayerStatProjection, ...], tuple[TeamDefenseProjection, ...]]:
     player_rows = _read_rows(player_files)
     team_rows = _read_rows(team_files)
     game_rows = _read_rows((games_file,))
+    snap_rows = _read_rows(snap_files)
     offense = _forecast_players(
-        slate, player_rows, team_rows, target_season, target_week, games_used, half_life_games
+        slate, player_rows, team_rows, snap_rows, target_season, target_week,
+        games_used, half_life_games
     )
     defenses = _forecast_defenses(
         slate, team_rows, game_rows, target_season, target_week, games_used, half_life_games
@@ -33,7 +36,9 @@ def forecast_from_nflverse(
     return offense, defenses
 
 
-def _forecast_players(slate, rows, team_rows, season, week, games_used, half_life):
+def _forecast_players(
+    slate, rows, team_rows, snap_rows, season, week, games_used, half_life
+):
     history = defaultdict(list)
     eligible_rows = []
     for row in rows:
@@ -42,6 +47,18 @@ def _forecast_players(slate, rows, team_rows, season, week, games_used, half_lif
         history[_normalize(row.get("player_display_name", ""))].append(row)
         eligible_rows.append(row)
     position_rates = _position_efficiency_rates(eligible_rows)
+    snap_history = defaultdict(dict)
+    snap_latest_week = 0
+    for row in snap_rows:
+        if (
+            row.get("game_type") != "REG"
+            or int(row.get("season") or 0) != season
+            or not _before(row, season, week)
+        ):
+            continue
+        key = (_normalize(row.get("player", "")), row.get("team", ""))
+        snap_history[key][(int(row["season"]), int(row["week"]))] = row
+        snap_latest_week = max(snap_latest_week, int(row["week"]))
     current_team_weeks = defaultdict(set)
     for row in team_rows:
         if row.get("season_type") == "REG" and int(row["season"]) == season and _before(row, season, week):
@@ -61,7 +78,9 @@ def _forecast_players(slate, rows, team_rows, season, week, games_used, half_lif
             by_game.setdefault(game_key, {"season": str(game_key[0]), "week": str(game_key[1])})
         current_games = [
             by_game[game_key]
-            for game_key in sorted(current_team_weeks.get(player.team, set()), reverse=True)[:3]
+            for game_key in sorted(
+                current_team_weeks.get(player.team, set()), reverse=True
+            )[:games_used]
         ]
         if (
             len(current_games) >= 2
@@ -92,7 +111,24 @@ def _forecast_players(slate, rows, team_rows, season, week, games_used, half_lif
             continue
         rates = position_rates.get(player.primary_position.value, position_rates["ALL"])
         attempts, carries, targets = avg("attempts"), avg("carries"), avg("targets")
-        role_trend = _role_trend_factor(player.primary_position, current_games)
+        opportunity_trend = _role_trend_factor(
+            player.primary_position, current_games
+        )
+        player_snap_history = snap_history.get(
+            (_normalize(player.name), player.team), {}
+        )
+        current_snaps = [
+            player_snap_history.get(
+                game_key,
+                {"season": str(game_key[0]), "week": str(game_key[1])},
+            )
+            for game_key in sorted(
+                current_team_weeks.get(player.team, set()), reverse=True
+            )[:games_used]
+            if game_key[1] <= snap_latest_week
+        ]
+        snap_trend = _snap_role_trend_factor(current_snaps)
+        role_trend = min(opportunity_trend, snap_trend)
         attempts *= role_trend
         carries *= role_trend
         targets *= role_trend
@@ -221,16 +257,50 @@ def _opportunities(position, row):
 
 
 def _role_trend_factor(position, current_games):
-    """Bound current-season volume trends without treating absences as role changes."""
+    """Translate a sustained recent opportunity change into a volume adjustment.
+
+    Games are newest first and include zero-usage team games. Two recent games
+    with a little usage are strong evidence of a reduced role, while two pure
+    zeroes remain ambiguous because the player may simply have been injured.
+    """
     opportunities = [_opportunities(position, row) for row in current_games]
-    active = [value for value in opportunities if value > 0]
-    if len(active) < 2 or len(opportunities) < 3:
+    if len(opportunities) < 3:
         return 1.0
-    recent = sum(opportunities[:2]) / 2
-    baseline = sum(opportunities) / len(opportunities)
-    if baseline <= 0:
+    recent_games = opportunities[:2]
+    prior_active = [value for value in opportunities[2:] if value > 0]
+    if not prior_active or sum(recent_games) == 0:
         return 1.0
-    return max(0.75, min(1.15, recent / baseline))
+    recent = sum(recent_games) / len(recent_games)
+    prior = sum(prior_active) / len(prior_active)
+    if prior <= 0:
+        return 1.0
+    ratio = recent / prior
+    if prior >= 3 and ratio < 0.60:
+        return max(0.20, ratio)
+    return max(0.75, min(1.15, ratio))
+
+
+def _snap_role_trend_factor(current_games):
+    """Detect a sustained decline in offensive participation.
+
+    The nflverse percentage is already normalized for team play volume. Missing
+    rows are padded as zeroes, but two pure zeroes remain ambiguous because an
+    injury absence is not evidence of a smaller healthy role.
+    """
+    shares = [_float(row, "offense_pct") for row in current_games]
+    if len(shares) < 3 or sum(shares[:2]) == 0:
+        return 1.0
+    prior_active = [value for value in shares[2:] if value > 0]
+    if not prior_active:
+        return 1.0
+    recent = sum(shares[:2]) / 2
+    prior = sum(prior_active) / len(prior_active)
+    if prior < 0.25:
+        return 1.0
+    ratio = recent / prior
+    if ratio < 0.60:
+        return max(0.20, ratio)
+    return max(0.75, min(1.15, ratio))
 
 
 def _normalize(value):

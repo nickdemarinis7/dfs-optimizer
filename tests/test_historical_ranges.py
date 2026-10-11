@@ -46,6 +46,37 @@ class HistoricalRangeTests(unittest.TestCase):
             self.assertGreaterEqual(result.p90, result.p75)
             self.assertIsNotNone(result.bust_probability)
 
+    def test_role_reduction_pulls_down_temporary_starter_ceiling(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            players = root / "players.csv"
+            teams = root / "teams.csv"
+            games = root / "games.csv"
+            players.write_text(
+                "season,week,season_type,player_display_name,receptions,receiving_yards,receiving_tds\n"
+                "2026,1,REG,Backup Tight End,6,60,0\n"
+                "2026,2,REG,Backup Tight End,5,50,1\n"
+                "2026,3,REG,Backup Tight End,1,2,0\n",
+                encoding="utf-8",
+            )
+            teams.write_text("season,week,season_type,game_id,team\n", encoding="utf-8")
+            games.write_text("game_id,home_team,away_team,home_score,away_score\n", encoding="utf-8")
+            player = Player(
+                "te", "Backup Tight End", Position.TE,
+                (Position.TE, Position.FLEX), 3000, "AAA", "BBB", "AAA@BBB",
+            )
+            slate = Slate(
+                Platform.DRAFTKINGS, ContestFormat.CLASSIC, (player,), "test.csv"
+            )
+
+            result = add_historical_ranges(
+                slate,
+                (Projection(player.name, player.team, 2.5, platform_id="te"),),
+                (players,), (teams,), games, 2026, 4,
+            )[0]
+
+            self.assertLess(result.ceiling, 8)
+
 
 if __name__ == "__main__":
     unittest.main()

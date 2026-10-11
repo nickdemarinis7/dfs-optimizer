@@ -92,7 +92,9 @@ def add_historical_ranges(
             continue
         historical_mean = sum(scores) / len(scores)
         context_scale = projection.projected_points / historical_mean if historical_mean > 0 else 1
-        context_scale = max(0.75, min(1.25, context_scale))
+        # A role-change projection must also pull down the historical ceiling.
+        # The old 0.75 floor preserved too much upside from temporary starts.
+        context_scale = max(0.35, min(1.25, context_scale))
         raw_p10 = _quantile(scores, 0.10) * context_scale
         raw_p25 = _quantile(scores, 0.25) * context_scale
         raw_p75 = _quantile(scores, 0.75) * context_scale

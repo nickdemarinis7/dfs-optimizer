@@ -29,6 +29,7 @@ from dfs_optimizer.optimization import (
     generate_single_game_lineups,
 )
 from dfs_optimizer.services.projections import apply_uploaded_ownership
+from dfs_optimizer.services.role_adjustments import apply_current_role_adjustments
 from dfs_optimizer.services.player_context import (
     fetch_player_context,
     summarize_prelock_context,
@@ -61,8 +62,16 @@ if slate is None or not projections:
     st.warning("Build projections on the Slate & projections screen first.", icon=":material/arrow_back:")
     st.stop()
 
-projection_by_id = {item.platform_id: item for item in projections}
 player_context = tuple(st.session_state.get("player_context", ()))
+base_projections = tuple(st.session_state.get("base_projections", ())) or tuple(projections)
+st.session_state["base_projections"] = base_projections
+projections, role_adjustments = apply_current_role_adjustments(
+    slate, base_projections, player_context
+)
+st.session_state["projections"] = projections
+st.session_state["role_adjustments"] = role_adjustments
+projection_by_id = {item.platform_id: item for item in projections}
+role_adjustment_by_id = {item.platform_id: item for item in role_adjustments}
 context_by_id = {item.platform_id: item for item in player_context}
 cfb_game_environments = st.session_state.get("cfb_game_environments", {})
 default_unique = 3 if slate.contest_format == ContestFormat.CLASSIC else 2
@@ -107,6 +116,24 @@ if slate.sport == Sport.NFL:
         "Current availability and role signals are checked again before optimization.",
         icon=":material/health_and_safety:",
     )
+    data_health = st.session_state.get("historical_data_health", {})
+    if data_health:
+        stats_week = data_health.get("stats_week")
+        snap_week = data_health.get("snap_week")
+        target_week = data_health.get("target_week")
+        st.caption(
+            f"Model inputs · stats through Week {stats_week or '—'} · "
+            f"snaps through Week {snap_week or '—'} · forecasting Week {target_week or '—'}"
+        )
+        expected_week = (target_week - 1) if isinstance(target_week, int) else None
+        if expected_week and (
+            stats_week is None or stats_week < expected_week
+            or snap_week is None or snap_week < expected_week - 1
+        ):
+            st.warning(
+                "Some model inputs are older than expected. Refresh historical data before lock.",
+                icon=":material/database:",
+            )
     if age_minutes is not None:
         freshness = "just now" if age_minutes < 1 else f"{age_minutes:.0f} minutes ago"
         st.caption(
@@ -132,6 +159,18 @@ if slate.sport == Sport.NFL:
             sorted(players[player_id].name for player_id in prelock.backup_quarterback_ids if player_id in players)
         )
         st.markdown(f":blue-badge[{len(prelock.backup_quarterback_ids)} backup QBs] {names}")
+    if prelock.subordinate_skill_player_ids:
+        names = ", ".join(
+            sorted(
+                players[player_id].name
+                for player_id in prelock.subordinate_skill_player_ids
+                if player_id in players
+            )[:8]
+        )
+        st.markdown(
+            f":orange-badge[{len(prelock.subordinate_skill_player_ids)} role risks] "
+            f"{names} · capped at one lineup by default when projected below 12 points"
+        )
     if prelock.unmatched_player_ids:
         unmatched_names = sorted(
             players[player_id].name
@@ -367,10 +406,18 @@ if customize_strategy:
             ownership_hash = hashlib.sha256(content).hexdigest()
             if st.session_state.get("ownership_hash") != ownership_hash:
                 try:
-                    projections, matches = apply_uploaded_ownership(slate, projections, ownership.name, content)
+                    base_projections, matches = apply_uploaded_ownership(
+                        slate, base_projections, ownership.name, content
+                    )
+                    projections, role_adjustments = apply_current_role_adjustments(
+                        slate, base_projections, player_context
+                    )
+                    st.session_state["base_projections"] = base_projections
                     st.session_state["projections"] = projections
+                    st.session_state["role_adjustments"] = role_adjustments
                     st.session_state["ownership_hash"] = ownership_hash
                     st.toast(f"Matched ownership for {matches} players.", icon=":material/check:")
+                    st.rerun()
                 except (OSError, ValueError) as exc:
                     st.error(f"Could not apply ownership projections: {exc}")
 
@@ -398,6 +445,7 @@ def include_in_status_view(player) -> bool:
         prelock.questionable_player_ids
         | prelock.unavailable_player_ids
         | prelock.backup_quarterback_ids
+        | prelock.subordinate_skill_player_ids
     )
     if status_view == "Available":
         return not status and not context_flagged
@@ -416,6 +464,7 @@ for player in players.values():
     if not include_in_status_view(player):
         continue
     projection = projection_by_id[player.platform_id]
+    role_adjustment = role_adjustment_by_id.get(player.platform_id)
     row = {
         "Player": player.name,
         "Pos": player.primary_position.value,
@@ -431,6 +480,8 @@ for player in players.values():
         "Est. own %": projection.projected_ownership,
         "Status": (player.status or "Available").upper(),
         "Role": context_by_id[player.platform_id].role_label if player.platform_id in context_by_id else "—",
+        "Role adj.": role_adjustment.factor if role_adjustment else 1.0,
+        "Why": role_adjustment.reason if role_adjustment else "No current-role reduction",
     }
     if slate.sport == Sport.CFB:
         environment = cfb_game_environments.get(player.team.upper())
@@ -461,6 +512,13 @@ st.dataframe(
         "Line adj. %": st.column_config.NumberColumn(
             format="%.1f%%",
             help="Projection adjustment from the team's implied score, capped at plus or minus 6%.",
+        ),
+        "Role adj.": st.column_config.NumberColumn(
+            format="%.0f%%",
+            help="Current depth-chart multiplier. A value below 100% means historical usage was reduced because a healthy starter is now ahead of this player.",
+        ),
+        "Why": st.column_config.TextColumn(
+            help="The specific current-role reason for any projection reduction."
         ),
     },
     width="stretch",
@@ -518,6 +576,7 @@ config_key = (
     require_qb_stack if slate.contest_format == ContestFormat.CLASSIC else None,
     require_bring_back if slate.contest_format == ContestFormat.CLASSIC else None,
     maximum_multiplier_exposure if slate.contest_format == ContestFormat.SINGLE_GAME else None,
+    tuple(sorted((item.platform_id, item.factor) for item in role_adjustments)),
 )
 st.session_state["current_config_key"] = config_key
 if st.session_state.get("lineups") and st.session_state.get("lineup_config_key") != config_key:
@@ -544,6 +603,11 @@ if st.button(
                         "The final live player-news refresh failed, so the most recent "
                         "available snapshot was used. Confirm player availability before lock."
                     )
+        projections, role_adjustments = apply_current_role_adjustments(
+            slate, base_projections, tuple(live_context)
+        )
+        st.session_state["projections"] = projections
+        st.session_state["role_adjustments"] = role_adjustments
         live_excluded = suggest_default_excluded_player_ids(
             slate, tuple(projections), live_context
         ) & players.keys()
@@ -755,6 +819,19 @@ if st.button(
                 }
                 for item in live_context
                 if item.platform_id in players
+            ),
+            "role_adjustments": tuple(
+                {
+                    "player": item.player,
+                    "team": item.team,
+                    "position": item.position,
+                    "depth_order": item.depth_order,
+                    "factor": item.factor,
+                    "original_projection": item.original_projection,
+                    "adjusted_projection": item.adjusted_projection,
+                    "reason": item.reason,
+                }
+                for item in role_adjustments
             ),
             "maximum_once_players": tuple(sorted(
                 players[player_id].name for player_id in effective_limited_ids

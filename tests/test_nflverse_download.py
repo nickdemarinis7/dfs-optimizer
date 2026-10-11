@@ -19,16 +19,22 @@ class NflverseDownloadTests(unittest.TestCase):
 
             self.assertEqual(paths["players"].read_bytes(), response.content)
             self.assertEqual(paths["teams"].read_bytes(), response.content)
+            self.assertEqual(paths["snaps"].read_bytes(), response.content)
             self.assertEqual(paths["games"].read_bytes(), response.content)
             self.assertEqual(paths["players"], Path(directory) / "players_2026.csv")
 
-        self.assertEqual(get.call_count, 3)
+        self.assertEqual(get.call_count, 4)
         get.assert_any_call(
             "https://github.com/nflverse/nflverse-data/releases/download/"
             "stats_player/stats_player_week_2026.csv",
             timeout=60,
         )
-        self.assertEqual(response.raise_for_status.call_count, 3)
+        get.assert_any_call(
+            "https://github.com/nflverse/nflverse-data/releases/download/"
+            "snap_counts/snap_counts_2026.csv",
+            timeout=60,
+        )
+        self.assertEqual(response.raise_for_status.call_count, 4)
 
 
 if __name__ == "__main__":

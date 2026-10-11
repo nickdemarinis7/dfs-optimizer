@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 import tempfile
 
@@ -19,15 +21,70 @@ from dfs_optimizer.projections import (
 class HistoricalDataPaths:
     player_files: tuple[Path, ...]
     team_files: tuple[Path, ...]
+    snap_files: tuple[Path, ...]
     games_file: Path
 
     @property
     def missing(self) -> tuple[Path, ...]:
         return tuple(
             path
-            for path in (*self.player_files, *self.team_files, self.games_file)
+            for path in (
+                *self.player_files, *self.team_files, *self.snap_files,
+                self.games_file,
+            )
             if not path.is_file()
         )
+
+    @property
+    def age_hours(self) -> float | None:
+        existing = tuple(
+            path for path in (
+                *self.player_files, *self.team_files, *self.snap_files,
+                self.games_file,
+            )
+            if path.is_file()
+        )
+        expected = len(self.player_files) + len(self.team_files) + len(self.snap_files) + 1
+        if len(existing) != expected:
+            return None
+        oldest_update = min(path.stat().st_mtime for path in existing)
+        return max(
+            0.0,
+            (datetime.now(timezone.utc).timestamp() - oldest_update) / 3600,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class HistoricalDataCoverage:
+    stats_week: int | None
+    snap_week: int | None
+
+
+def historical_data_coverage(
+    paths: HistoricalDataPaths, target_season: int
+) -> HistoricalDataCoverage:
+    """Report the newest regular-season week available to each model input."""
+    def newest_week(files: tuple[Path, ...]) -> int | None:
+        latest: int | None = None
+        for path in files:
+            if not path.is_file():
+                continue
+            with path.open(newline="", encoding="utf-8-sig") as handle:
+                for row in csv.DictReader(handle):
+                    try:
+                        season = int(row.get("season", ""))
+                        week = int(row.get("week", ""))
+                    except (TypeError, ValueError):
+                        continue
+                    game_type = (row.get("season_type") or row.get("game_type") or "REG").upper()
+                    if season == target_season and game_type == "REG":
+                        latest = week if latest is None else max(latest, week)
+        return latest
+
+    return HistoricalDataCoverage(
+        stats_week=newest_week(paths.player_files),
+        snap_week=newest_week(paths.snap_files),
+    )
 
 
 def historical_data_paths(
@@ -39,6 +96,7 @@ def historical_data_paths(
     return HistoricalDataPaths(
         tuple(root / f"players_{season}.csv" for season in seasons),
         tuple(root / f"teams_{season}.csv" for season in seasons),
+        tuple(root / f"snap_counts_{season}.csv" for season in seasons),
         root / "games.csv",
     )
 
@@ -71,6 +129,7 @@ def build_historical_projections(
         paths.games_file,
         target_season,
         target_week,
+        snap_files=paths.snap_files,
     )
     offense, defenses = apply_pregame_context(
         slate,

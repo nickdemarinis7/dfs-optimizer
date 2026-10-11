@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from os import utime
 from pathlib import Path
+from time import time
 
-from dfs_optimizer.services import historical_data_paths
+from dfs_optimizer.services import historical_data_coverage, historical_data_paths
 
 
 class HistoricalProjectionServiceTests(unittest.TestCase):
@@ -26,8 +28,47 @@ class HistoricalProjectionServiceTests(unittest.TestCase):
                     Path(directory) / "teams_2026.csv",
                 ),
             )
+            self.assertEqual(
+                paths.snap_files,
+                (
+                    Path(directory) / "snap_counts_2025.csv",
+                    Path(directory) / "snap_counts_2026.csv",
+                ),
+            )
             self.assertEqual(paths.games_file, Path(directory) / "games.csv")
-            self.assertEqual(len(paths.missing), 5)
+            self.assertEqual(len(paths.missing), 7)
+            self.assertIsNone(paths.age_hours)
+
+    def test_reports_age_from_oldest_historical_input(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = historical_data_paths(2026, directory)
+            all_paths = (
+                *paths.player_files, *paths.team_files, *paths.snap_files,
+                paths.games_file,
+            )
+            for path in all_paths:
+                path.write_text("test", encoding="utf-8")
+            old_time = time() - 18 * 3600
+            utime(paths.player_files[0], (old_time, old_time))
+
+            self.assertGreaterEqual(paths.age_hours, 17.9)
+
+    def test_reports_latest_current_season_stats_and_snap_weeks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = historical_data_paths(2026, directory)
+            paths.player_files[1].write_text(
+                "season,week,season_type\n2025,18,REG\n2026,4,REG\n2026,5,POST\n",
+                encoding="utf-8",
+            )
+            paths.snap_files[1].write_text(
+                "season,week,game_type\n2026,2,REG\n2026,3,REG\n",
+                encoding="utf-8",
+            )
+
+            coverage = historical_data_coverage(paths, 2026)
+
+            self.assertEqual(coverage.stats_week, 4)
+            self.assertEqual(coverage.snap_week, 3)
 
 
 if __name__ == "__main__":

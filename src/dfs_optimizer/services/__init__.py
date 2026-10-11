@@ -1,11 +1,14 @@
 from .projections import (
+    HistoricalDataCoverage,
     HistoricalDataPaths,
     apply_uploaded_ownership,
     build_historical_projections,
     download_historical_data,
+    historical_data_coverage,
     historical_data_paths,
 )
 from .risk import suggest_default_excluded_player_ids, suggest_max_once_player_ids
+from .role_adjustments import RoleAdjustment, apply_current_role_adjustments
 from .player_context import (
     PlayerContext,
     PrelockSummary,
@@ -40,6 +43,7 @@ __all__ = [
     "CFB_FORECAST_MODEL_VERSION",
     "CFBGameEnvironment",
     "HistoricalDataPaths",
+    "HistoricalDataCoverage",
     "AuditFinding",
     "PortfolioDiagnostics",
     "PreflightReport",
@@ -57,6 +61,8 @@ __all__ = [
     "infer_cfb_team_names_from_file",
     "suggest_max_once_player_ids",
     "suggest_default_excluded_player_ids",
+    "RoleAdjustment",
+    "apply_current_role_adjustments",
     "PlayerContext",
     "PrelockSummary",
     "fetch_player_context",
@@ -79,6 +85,7 @@ __all__ = [
     "update_run_label",
     "discover_salary_files",
     "download_historical_data",
+    "historical_data_coverage",
     "historical_data_paths",
     "infer_slate_period",
     "load_uploaded_salary_file",

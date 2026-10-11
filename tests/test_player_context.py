@@ -20,12 +20,14 @@ class PlayerContextTests(unittest.TestCase):
             Player("dak", "Dak Prescott", Position.QB, (Position.QB,), 15000, "DAL", "TB", "DAL@TB"),
             Player("joe", "Joe Milton III", Position.QB, (Position.QB,), 6000, "DAL", "TB", "DAL@TB"),
             Player("wr", "Depth Receiver", Position.WR, (Position.WR, Position.FLEX), 7000, "DAL", "TB", "DAL@TB"),
+            Player("te", "Backup Tight End", Position.TE, (Position.TE, Position.FLEX), 5000, "DAL", "TB", "DAL@TB"),
         )
         self.slate = Slate(Platform.FANDUEL, ContestFormat.SINGLE_GAME, self.players, "test.csv")
         self.projections = (
             Projection("Dak Prescott", "DAL", 20, platform_id="dak"),
             Projection("Joe Milton III", "DAL", 8, platform_id="joe"),
             Projection("Depth Receiver", "DAL", 8, platform_id="wr", floor=2),
+            Projection("Backup Tight End", "DAL", 7, platform_id="te", floor=2),
         )
 
     def test_matches_current_depth_and_injury_context(self) -> None:
@@ -39,11 +41,25 @@ class PlayerContextTests(unittest.TestCase):
         self.assertEqual(by_id["joe"].depth_chart_position, 3)
         self.assertEqual(by_id["wr"].injury_status, "Questionable")
 
+    def test_uses_sleeper_depth_chart_order_instead_of_position_label(self) -> None:
+        contexts = match_player_context(self.slate, {
+            "4": {
+                "full_name": "Backup Tight End",
+                "team": "DAL",
+                "depth_chart_position": "TE",
+                "depth_chart_order": 2,
+                "active": True,
+            },
+        })
+
+        self.assertEqual(contexts[0].depth_chart_position, 2)
+
     def test_context_excludes_backup_qb_and_limits_deep_skill_player(self) -> None:
         contexts = match_player_context(self.slate, {
             "1": {"full_name": "Dak Prescott", "team": "DAL", "depth_chart_position": 1, "active": True},
             "2": {"full_name": "Joe Milton III", "team": "DAL", "depth_chart_position": 3, "active": True},
             "3": {"full_name": "Depth Receiver", "team": "DAL", "depth_chart_position": 4, "active": True},
+            "4": {"full_name": "Backup Tight End", "team": "DAL", "depth_chart_position": 2, "active": True},
         })
 
         excluded = suggest_default_excluded_player_ids(
@@ -55,6 +71,7 @@ class PlayerContextTests(unittest.TestCase):
 
         self.assertIn("joe", excluded)
         self.assertIn("wr", limited)
+        self.assertIn("te", limited)
         self.assertNotIn("dak", excluded)
 
     def test_prelock_summary_identifies_role_and_start_time_risks(self) -> None:
@@ -88,6 +105,10 @@ class PlayerContextTests(unittest.TestCase):
                 "full_name": "Joe Milton III", "team": "DAL",
                 "depth_chart_position": 3, "active": True,
             },
+            "4": {
+                "full_name": "Backup Tight End", "team": "DAL",
+                "depth_chart_position": 2, "active": True,
+            },
         })
 
         summary = summarize_prelock_context(
@@ -98,6 +119,7 @@ class PlayerContextTests(unittest.TestCase):
 
         self.assertEqual(summary.questionable_player_ids, frozenset({"dak"}))
         self.assertEqual(summary.backup_quarterback_ids, frozenset({"joe"}))
+        self.assertEqual(summary.subordinate_skill_player_ids, frozenset({"te"}))
         self.assertEqual(summary.unmatched_player_ids, frozenset({"wr"}))
         self.assertEqual(len(summary.games_starting_soon), 1)
         self.assertEqual(summary.timed_games, 1)

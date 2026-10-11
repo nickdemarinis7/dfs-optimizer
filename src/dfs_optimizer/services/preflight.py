@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from dfs_optimizer.models import ContestFormat, Projection, Slate, Sport
+from dfs_optimizer.models import ContestFormat, Position, Projection, Slate, Sport
 from dfs_optimizer.rules import classic_rules_for, single_game_rules_for
 from .risk import suggest_default_excluded_player_ids
 from .player_context import PlayerContext
@@ -268,6 +268,9 @@ def preflight_lineups(
     selected_ids = {
         entry.player.platform_id for lineup in lineups for entry in lineup.entries
     }
+    exposure_counts = Counter(
+        entry.player.platform_id for lineup in lineups for entry in lineup.entries
+    )
     players_by_id = {player.platform_id: player for player in slate.players}
     for player_id in sorted(role_risks & selected_ids):
         player = players_by_id[player_id]
@@ -275,6 +278,25 @@ def preflight_lineups(
             findings.append(AuditFinding(
                 "WARNING", "backup_quarterback",
                 f"{player.name} appears to be a subordinate same-team quarterback and was manually restored to the player pool.",
+            ))
+
+    context_by_id = {item.platform_id: item for item in player_context}
+    for player_id, count in sorted(exposure_counts.items()):
+        player = players_by_id[player_id]
+        context = context_by_id.get(player_id)
+        if context is None or count < 2:
+            continue
+        depth = context.depth_chart_position or 0
+        subordinate = (
+            player.primary_position == Position.TE and depth >= 2
+        ) or (
+            player.primary_position in {Position.RB, Position.WR} and depth >= 3
+        )
+        if subordinate:
+            findings.append(AuditFinding(
+                "WARNING", "subordinate_skill_exposure",
+                f"{player.name} is depth {depth} and appears in {count} lineups. "
+                "Confirm that the player's current role supports this exposure.",
             ))
 
     return PreflightReport(tuple(findings), tuple(passed))

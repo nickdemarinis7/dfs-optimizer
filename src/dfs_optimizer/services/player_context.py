@@ -36,6 +36,7 @@ class PrelockSummary:
     questionable_player_ids: frozenset[str]
     unavailable_player_ids: frozenset[str]
     backup_quarterback_ids: frozenset[str]
+    subordinate_skill_player_ids: frozenset[str]
     games_starting_soon: tuple[str, ...]
     started_games: tuple[str, ...]
     timed_games: int
@@ -78,6 +79,7 @@ def summarize_prelock_context(
     unavailable = set()
     questionable = set()
     backups = set()
+    subordinate_skill_players = set()
     for player in slate.players:
         context = context_by_id.get(player.platform_id)
         salary_status = (player.status or "").strip().upper()
@@ -104,6 +106,17 @@ def summarize_prelock_context(
             and (context.depth_chart_position or 1) > 1
         ):
             backups.add(player.platform_id)
+        if context is not None and (
+            (
+                player.primary_position == Position.TE
+                and (context.depth_chart_position or 0) >= 2
+            )
+            or (
+                player.primary_position in {Position.RB, Position.WR}
+                and (context.depth_chart_position or 0) >= 3
+            )
+        ):
+            subordinate_skill_players.add(player.platform_id)
 
     current_time = now or datetime.now(timezone.utc)
     if current_time.tzinfo is None:
@@ -126,6 +139,7 @@ def summarize_prelock_context(
         questionable_player_ids=frozenset(questionable),
         unavailable_player_ids=frozenset(unavailable),
         backup_quarterback_ids=frozenset(backups),
+        subordinate_skill_player_ids=frozenset(subordinate_skill_players),
         games_starting_soon=soon,
         started_games=started,
         timed_games=len(starts),
@@ -155,7 +169,13 @@ def match_player_context(
         if len(candidates) != 1:
             continue
         record = candidates[0]
-        depth = record.get("depth_chart_position")
+        # Sleeper's depth_chart_position is the position label (for example,
+        # "TE"). depth_chart_order is the actual 1/2/3 role rank.
+        depth = record.get("depth_chart_order")
+        if depth in (None, ""):
+            # Retain compatibility with older/captured payloads that used the
+            # position field for a numeric order.
+            depth = record.get("depth_chart_position")
         try:
             depth = int(depth) if depth not in (None, "") else None
         except (TypeError, ValueError):

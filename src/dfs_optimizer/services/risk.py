@@ -136,7 +136,10 @@ def suggest_max_once_player_ids(
         for player in slate.players
         if player.primary_position in {Position.RB, Position.WR, Position.TE}
         and (context := context_by_id.get(player.platform_id)) is not None
-        and (context.depth_chart_position or 0) >= 3
+        and (
+            (player.primary_position == Position.TE and (context.depth_chart_position or 0) >= 2)
+            or (context.depth_chart_position or 0) >= 3
+        )
         and (projection := by_id.get(player.platform_id)) is not None
         and projection.projected_points < 12
     )
