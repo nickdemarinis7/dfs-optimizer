@@ -53,6 +53,7 @@ __all__ = [
     "build_cfb_projections_from_file",
     "estimate_cfb_ownership",
     "infer_cfb_season",
+    "infer_cfb_week",
     "infer_cfb_team_names_from_file",
     "suggest_max_once_player_ids",
     "suggest_default_excluded_player_ids",
@@ -92,5 +93,6 @@ from .cfb_projections import (
     cfb_consensus_lines_csv,
     estimate_cfb_ownership,
     infer_cfb_season,
+    infer_cfb_week,
     infer_cfb_team_names_from_file,
 )

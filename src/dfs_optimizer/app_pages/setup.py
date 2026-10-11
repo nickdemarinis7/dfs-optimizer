@@ -33,6 +33,7 @@ from dfs_optimizer.services.cfb_projections import (
     cfb_consensus_lines_csv,
     estimate_cfb_ownership,
     infer_cfb_season,
+    infer_cfb_week,
     infer_cfb_team_names_from_file,
 )
 from dfs_optimizer.services.slates import infer_slate_period, load_uploaded_salary_file
@@ -52,8 +53,10 @@ def _current_player_context(slate, cache_dir: str):
 
 
 @st.cache_data(ttl=6 * 3600, max_entries=8, show_spinner=False)
-def _cfb_forecast(slate, season: int, cache_dir: str, model_version: str):
-    return build_cfb_projections(slate, season, cache_dir)
+def _cfb_forecast(
+    slate, season: int, target_week: int, cache_dir: str, model_version: str
+):
+    return build_cfb_projections(slate, season, target_week, cache_dir)
 
 
 @st.cache_data(ttl=15 * 60, max_entries=2, show_spinner=False)
@@ -120,7 +123,7 @@ if st.button("Change salary file", icon=":material/swap_horiz:"):
         "projections", "projection_key", "projection_built_at", "player_context",
         "player_context_error", "player_context_built_at", "player_context_attempted",
         "ownership_hash", "lineups",
-        "cfb_game_environments", "cfb_lines_hash", "cfb_lines_name",
+        "cfb_game_environments", "cfb_lines_hash", "cfb_lines_name", "cfb_target_week",
         "cfb_odds_warning",
         "lineup_config_key", "run_archive", "run_archive_name", "saved_run_path",
         "current_run_id",
@@ -154,9 +157,24 @@ if slate.sport == Sport.CFB:
             "Season", min_value=2013, max_value=2100, value=season,
             help="The season used for current player game logs.",
         ))
+        inferred_week = infer_cfb_week(slate)
+        target_week = int(st.number_input(
+            "Target week",
+            min_value=1,
+            max_value=20,
+            value=inferred_week or 1,
+            help=(
+                "Only games before this week are used. The target week's results "
+                "are always excluded, even when the data file is refreshed later."
+            ),
+            key=f"cfb-target-week-{hash(slate)}",
+        ))
         refresh_cfb = st.toggle(
-            "Refresh college data",
-            help="Download the latest public play-level data instead of using the six-hour cache.",
+            "Force-download latest college data",
+            help=(
+                "Off uses the six-hour disk cache when available, but still downloads "
+                "when that cache is missing or stale. The target-week cutoff prevents leakage."
+            ),
         )
         st.caption(
             "Current-season play data: cfbfastR / SportsDataverse. "
@@ -195,7 +213,7 @@ if slate.sport == Sport.CFB:
         if lines_content else ("automatic" if odds_api_key else None)
     )
     projection_key = (
-        CFB_FORECAST_MODEL_VERSION, hash(slate), season,
+        CFB_FORECAST_MODEL_VERSION, hash(slate), season, target_week,
         str(Path("data/cache/cfb").expanduser()), lines_hash,
     )
     if st.button(
@@ -214,7 +232,7 @@ if slate.sport == Sport.CFB:
                     _cfb_forecast.clear()
                 status.write("Scoring recent form and matchup context")
                 projections = _cfb_forecast(
-                    slate, season, "data/cache/cfb", CFB_FORECAST_MODEL_VERSION
+                    slate, season, target_week, "data/cache/cfb", CFB_FORECAST_MODEL_VERSION
                 )
                 automatic_warning = None
                 lines_name = lines_upload.name if lines_upload else None
@@ -265,6 +283,7 @@ if slate.sport == Sport.CFB:
             st.session_state["projections"] = projections
             st.session_state["projection_key"] = projection_key
             st.session_state["projection_built_at"] = datetime.now(timezone.utc)
+            st.session_state["cfb_target_week"] = target_week
             st.switch_page("app_pages/build.py")
         except (OSError, ValueError) as exc:
             st.error(f"Could not build the CFB forecast: {exc}")
@@ -341,10 +360,13 @@ if slate.sport == Sport.CFB:
                 except ValueError as exc:
                     st.error(f"Could not apply the game lines: {exc}")
                     st.stop()
-            fallback_key = ("cfb-platform-average-v3", hash(slate), lines_hash)
+            fallback_key = (
+                "cfb-platform-average-v4", hash(slate), target_week, lines_hash
+            )
             st.session_state["projections"] = fallback
             st.session_state["projection_key"] = fallback_key
             st.session_state["projection_built_at"] = datetime.now(timezone.utc)
+            st.session_state["cfb_target_week"] = target_week
             st.session_state["cfb_game_environments"] = environments
             st.session_state["cfb_lines_hash"] = lines_hash
             st.session_state["cfb_lines_name"] = fallback_lines_name

@@ -182,7 +182,7 @@ else:
     current_projection_key = st.session_state.get("projection_key") or ()
     cfb_model = (
         "recent-form forecast"
-        if current_projection_key and current_projection_key[0] == "cfb-recent-usage-v3"
+        if current_projection_key and current_projection_key[0] == "cfb-recent-usage-v4"
         else "platform-average baseline"
     )
     with st.container(border=True):
@@ -726,6 +726,10 @@ if st.button(
             )),
             "cfb_game_lines_source": (
                 st.session_state.get("cfb_lines_name")
+                if slate.sport == Sport.CFB else None
+            ),
+            "cfb_target_week": (
+                st.session_state.get("cfb_target_week")
                 if slate.sport == Sport.CFB else None
             ),
             "cfb_game_lines_team_coverage": (

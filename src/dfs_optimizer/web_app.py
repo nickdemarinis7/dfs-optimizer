@@ -26,6 +26,7 @@ for key, default in (
     ("current_config_key", None),
     ("lineup_settings", {}),
     ("projection_built_at", None),
+    ("cfb_target_week", None),
     ("salary_content", None),
     ("salary_loaded_at", None),
     ("player_context", ()),

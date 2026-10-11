@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
+from datetime import date, datetime, timedelta
 import io
 import math
 from pathlib import Path
@@ -16,7 +17,7 @@ from dfs_optimizer.models import OffensiveStatLine, Player, Position, Projection
 from dfs_optimizer.rules import classic_rules_for, nfl_scoring_for
 
 
-CFB_FORECAST_MODEL_VERSION = "cfb-recent-usage-v3"
+CFB_FORECAST_MODEL_VERSION = "cfb-recent-usage-v4"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +49,25 @@ def infer_cfb_season(slate: Slate) -> int | None:
         if match := re.search(r"\b(20\d{2})\b", value):
             return int(match.group(1))
     return None
+
+
+def infer_cfb_week(slate: Slate) -> int | None:
+    """Infer the conventional CFB week from the earliest slate kickoff date."""
+    kickoff_dates = []
+    for value in slate.games:
+        if match := re.search(r"\b(\d{1,2})/(\d{1,2})/(20\d{2})\b", value):
+            try:
+                kickoff_dates.append(datetime.strptime(match.group(0), "%m/%d/%Y").date())
+            except ValueError:
+                continue
+    if not kickoff_dates:
+        return None
+    kickoff = min(kickoff_dates)
+    september_first = date(kickoff.year, 9, 1)
+    first_week_saturday = september_first - timedelta(
+        days=(september_first.weekday() - 5) % 7
+    )
+    return max(1, (kickoff - first_week_saturday).days // 7 + 1)
 
 
 def infer_cfb_team_names_from_file(
@@ -132,6 +152,7 @@ def cfb_consensus_lines_csv(
 def build_cfb_projections(
     slate: Slate,
     season: int,
+    target_week: int,
     cache_dir: str | Path = "data/cache/cfb",
     *,
     refresh: bool = False,
@@ -141,12 +162,14 @@ def build_cfb_projections(
     source = download_cfb_player_stats(
         season, cache_dir, refresh=refresh
     )
-    return build_cfb_projections_from_file(slate, source)
+    return build_cfb_projections_from_file(slate, source, target_week)
 
 
 def build_cfb_projections_from_file(
-    slate: Slate, source: str | Path
+    slate: Slate, source: str | Path, target_week: int
 ) -> tuple[Projection, ...]:
+    if target_week < 1:
+        raise ValueError("CFB target week must be at least 1")
     available = tuple(
         player for player in slate.players
         if (player.status or "").strip().upper() not in {"IR", "O", "OUT"}
@@ -164,6 +187,8 @@ def build_cfb_projections_from_file(
             opponent = row.get("opponent", "")
             game_id = row.get("game_id", "")
             week = int(_number(row.get("week")))
+            if week >= target_week:
+                continue
             names = {
                 _normalize(row.get(column, ""))
                 for column in (
