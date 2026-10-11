@@ -20,12 +20,26 @@ from dfs_optimizer.app_ui import (
 )
 from dfs_optimizer.projections import build_platform_average_projections
 from dfs_optimizer.models import Sport
-from dfs_optimizer.services.projections import (
-    build_historical_projections,
-    download_historical_data,
-    historical_data_coverage,
-    historical_data_paths,
-)
+try:
+    from dfs_optimizer.services.projections import (
+        build_historical_projections,
+        download_historical_data,
+        historical_data_coverage,
+        historical_data_paths,
+    )
+except ImportError:
+    # Streamlit Cloud can keep an already-imported service module alive while
+    # pulling a deployment that adds a new export. Reload it once from the
+    # updated source tree so the page and service cannot become mismatched.
+    from importlib import import_module, reload
+
+    _projection_services = reload(
+        import_module("dfs_optimizer.services.projections")
+    )
+    build_historical_projections = _projection_services.build_historical_projections
+    download_historical_data = _projection_services.download_historical_data
+    historical_data_coverage = _projection_services.historical_data_coverage
+    historical_data_paths = _projection_services.historical_data_paths
 from dfs_optimizer.services.player_context import fetch_player_context
 from dfs_optimizer.services.role_adjustments import apply_current_role_adjustments
 from dfs_optimizer.services.cfb_projections import (
