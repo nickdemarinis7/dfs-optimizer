@@ -11,6 +11,7 @@ class ClassicRosterRuleTests(unittest.TestCase):
         rules = classic_rules_for(Platform.DRAFTKINGS)
         self.assertEqual(rules.salary_cap, 50_000)
         self.assertEqual(rules.lineup_size, 9)
+        self.assertEqual(rules.minimum_games, 2)
         self.assertEqual([slot.name for slot in rules.slots], [
             "QB", "RB1", "RB2", "WR1", "WR2", "WR3", "TE", "FLEX", "DST"
         ])
@@ -19,6 +20,8 @@ class ClassicRosterRuleTests(unittest.TestCase):
         rules = classic_rules_for(Platform.FANDUEL)
         self.assertEqual(rules.salary_cap, 60_000)
         self.assertEqual(rules.lineup_size, 9)
+        self.assertEqual(rules.minimum_teams, 3)
+        self.assertEqual(rules.maximum_players_per_team, 4)
 
     def test_flex_accepts_only_skill_positions(self) -> None:
         flex = classic_rules_for(Platform.DRAFTKINGS).slots[7]
@@ -33,6 +36,7 @@ class ClassicRosterRuleTests(unittest.TestCase):
 
         self.assertEqual(rules.lineup_size, 8)
         self.assertEqual(rules.salary_cap, 50_000)
+        self.assertEqual(rules.minimum_games, 2)
         self.assertEqual(rules.slots[-1].name, "S-FLEX")
         self.assertTrue(rules.slots[-1].accepts(Position.QB))
 
@@ -41,6 +45,8 @@ class ClassicRosterRuleTests(unittest.TestCase):
 
         self.assertEqual(rules.lineup_size, 7)
         self.assertEqual(rules.salary_cap, 60_000)
+        self.assertEqual(rules.minimum_teams, 3)
+        self.assertEqual(rules.maximum_players_per_team, 4)
         self.assertTrue(rules.slots[3].accepts(Position.TE))
 
 

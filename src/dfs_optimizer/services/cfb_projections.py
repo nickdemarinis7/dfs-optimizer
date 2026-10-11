@@ -13,11 +13,19 @@ import unicodedata
 
 from dfs_optimizer.data_sources.cfb import download_cfb_player_stats
 from dfs_optimizer.data_sources.cfb_odds import CFBConsensusLine
-from dfs_optimizer.models import OffensiveStatLine, Player, Position, Projection, Slate, Sport
-from dfs_optimizer.rules import classic_rules_for, nfl_scoring_for
+from dfs_optimizer.models import (
+    OffensiveStatLine,
+    Platform,
+    Player,
+    Position,
+    Projection,
+    Slate,
+    Sport,
+)
+from dfs_optimizer.rules import cfb_scoring_for, classic_rules_for
 
 
-CFB_FORECAST_MODEL_VERSION = "cfb-recent-usage-v5"
+CFB_FORECAST_MODEL_VERSION = "cfb-recent-usage-v7"
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +199,11 @@ def build_cfb_projections_from_file(
             week = int(_number(row.get("week")))
             if week >= target_week:
                 continue
+            # FanDuel CFB counts regulation plus the first two overtime
+            # periods. cfbfastR represents later overtimes as period 7+.
+            period = int(_number(row.get("period")))
+            if slate.platform == Platform.FANDUEL and period >= 7:
+                continue
             names = {
                 _normalize(row.get(column, ""))
                 for column in (
@@ -243,7 +256,7 @@ def build_cfb_projections_from_file(
     }
     game_points: dict[str, list[tuple[int, float, float]]] = defaultdict(list)
     defense_points: dict[tuple[str, Position], list[float]] = defaultdict(list)
-    scoring = nfl_scoring_for(slate.platform)
+    scoring = cfb_scoring_for(slate.platform)
     for player in available:
         normalized = _normalize(player.name)
         expected_team = team_names.get(player.team)

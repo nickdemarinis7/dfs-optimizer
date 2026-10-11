@@ -154,6 +154,7 @@ class ClassicOptimizerTests(unittest.TestCase):
         self.assertEqual(lineup.projected_points, 184)
         self.assertEqual(len({entry.player.platform_id for entry in lineup.entries}), 9)
         self.assertGreaterEqual(len({entry.player.team for entry in lineup.entries}), 2)
+        self.assertGreaterEqual(len({entry.player.game for entry in lineup.entries}), 2)
 
     def test_builds_optimal_fanduel_lineup(self) -> None:
         slate, matches = make_slate(Platform.FANDUEL)
@@ -162,6 +163,9 @@ class ClassicOptimizerTests(unittest.TestCase):
         self.assertEqual(len(lineup.entries), 9)
         self.assertEqual(lineup.salary, 54_000)
         self.assertLessEqual(lineup.salary, 60_000)
+        team_counts = Counter(entry.player.team for entry in lineup.entries)
+        self.assertGreaterEqual(len(team_counts), 3)
+        self.assertLessEqual(max(team_counts.values()), 4)
 
     def test_rejects_too_few_projected_players(self) -> None:
         slate, matches = make_slate(Platform.DRAFTKINGS)
@@ -417,7 +421,11 @@ class ClassicOptimizerTests(unittest.TestCase):
                 replace(
                     player,
                     opponent="BBB" if player.team == "AAA" else "AAA",
-                    game="AAA@BBB",
+                    game=(
+                        "AAA@BBB"
+                        if player.team in {"AAA", "BBB"}
+                        else "CCC@DDD"
+                    ),
                 )
                 for player in slate.players
             ),

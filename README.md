@@ -56,8 +56,8 @@ needed, so a restarted deployment may need to download it again.
 
 The Results screen includes a pre-submit audit before downloads unlock. It
 independently checks lineup count, roster size, duplicate players, slate player
-IDs, salary cap, minimum teams, positive projections, selected-player statuses,
-and projection age.
+IDs, salary cap, minimum teams and games, per-team player limits, positive
+projections, selected-player statuses, and projection age.
 
 The default projection source is the pregame historical forecast. Select the
 target season and week, then build the forecast; the app can download the
@@ -162,6 +162,12 @@ The platform-neutral expected-stat format is demonstrated in
 correct platform points after joining them to a salary slate. Bonus fields are
 probabilities from 0 through 1, so expected bonus value is calculated without
 pretending the mean yardage is a realized game outcome.
+
+College football scoring is selected separately. DraftKings CFB retains the
+300-yard passing and 100-yard rushing/receiving bonuses; FanDuel CFB uses
+half-PPR but does not award those yardage bonuses. FanDuel CFB history also
+excludes plays from the third overtime period and later, using cfbfastR's
+play-level period field.
 
 Defense projections use expected sacks, turnovers, return events, and a full
 probability distribution over the seven points-allowed scoring bands. See

@@ -5,12 +5,19 @@ from .classic import (
     RosterSlot,
     classic_rules_for,
 )
-from .scoring import NFL_SCORING_RULES, NFLScoringRules, nfl_scoring_for
+from .scoring import (
+    CFB_SCORING_RULES,
+    NFL_SCORING_RULES,
+    NFLScoringRules,
+    cfb_scoring_for,
+    nfl_scoring_for,
+)
 from .single_game import SINGLE_GAME_RULES, SingleGameRules, single_game_rules_for
 
 __all__ = [
     "CLASSIC_RULES",
     "CFB_CLASSIC_RULES",
+    "CFB_SCORING_RULES",
     "NFL_SCORING_RULES",
     "NFLScoringRules",
     "RosterRules",
@@ -18,6 +25,7 @@ __all__ = [
     "SingleGameRules",
     "RosterSlot",
     "classic_rules_for",
+    "cfb_scoring_for",
     "nfl_scoring_for",
     "single_game_rules_for",
 ]

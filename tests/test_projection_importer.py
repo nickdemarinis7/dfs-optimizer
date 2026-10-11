@@ -44,6 +44,16 @@ class ProjectionImporterTests(unittest.TestCase):
             with self.assertRaisesRegex(ProjectionImportError, "duplicate"):
                 import_projections_csv(path)
 
+    def test_rejects_non_finite_projection_values(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "non-finite.csv"
+            path.write_text(
+                "name,team,projected_points\nA Player,ABC,nan\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ProjectionImportError, "finite"):
+                import_projections_csv(path)
+
     def test_merges_projected_ownership_without_replacing_points(self) -> None:
         slate = import_salary_csv(PROJECT_ROOT / "samples" / "DKSalaries.csv")
         projections = import_projections_csv(PROJECT_ROOT / "examples" / "projections.csv")

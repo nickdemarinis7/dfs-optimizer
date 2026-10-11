@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from dfs_optimizer.models import ContestFormat, Platform, Player, Position, Projection, Slate, Sport
@@ -86,6 +87,45 @@ class CFBProjectionTests(unittest.TestCase):
             projections = build_cfb_projections_from_file(self.slate, source, 7)
         quarterback = next(item for item in projections if item.platform_id == "qb")
         self.assertLess(quarterback.projected_points, 30)
+
+    def test_fanduel_excludes_third_overtime_and_later(self) -> None:
+        fanduel_slate = replace(self.slate, platform=Platform.FANDUEL)
+        headers = (
+            "game_id,season,week,period,team,opponent,completion_player,completion_yds,"
+            "rush_player,rush_yds,reception_player,reception_yds,target_player,"
+            "interception_thrown_player,interception_thrown_stat,touchdown_player\n"
+        )
+        regulation = "1,2026,1,4,Alpha,Beta,Example Quarterback,100,,,,,,,,\n"
+        third_overtime = "1,2026,1,7,Alpha,Beta,Example Quarterback,200,,,,,,,,\n"
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "stats.csv"
+            source.write_text(headers + regulation + third_overtime, encoding="utf-8")
+            with_late_overtime = build_cfb_projections_from_file(
+                fanduel_slate, source, 2
+            )
+            draftkings_with_late_overtime = build_cfb_projections_from_file(
+                self.slate, source, 2
+            )
+            source.write_text(headers + regulation, encoding="utf-8")
+            regulation_only = build_cfb_projections_from_file(
+                fanduel_slate, source, 2
+            )
+            draftkings_regulation_only = build_cfb_projections_from_file(
+                self.slate, source, 2
+            )
+
+        first = next(item for item in with_late_overtime if item.platform_id == "qb")
+        second = next(item for item in regulation_only if item.platform_id == "qb")
+        self.assertEqual(first.projected_points, second.projected_points)
+        dk_full = next(
+            item for item in draftkings_with_late_overtime
+            if item.platform_id == "qb"
+        )
+        dk_regulation = next(
+            item for item in draftkings_regulation_only
+            if item.platform_id == "qb"
+        )
+        self.assertGreater(dk_full.projected_points, dk_regulation.projected_points)
 
     def test_ownership_proxy_is_bounded_for_small_slates(self) -> None:
         estimates = estimate_cfb_ownership(self.slate, (

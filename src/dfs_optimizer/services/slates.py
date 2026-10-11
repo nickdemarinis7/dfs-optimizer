@@ -71,7 +71,10 @@ def infer_slate_period(
         return None
     best_score = max(score for score, _ in scores)
     best = [period for score, period in scores if score == best_score]
-    if best_score < max(1, len(slate_games) // 2) or len(best) != 1:
+    # Do not assign an undated slate from a weak partial match. A strict
+    # majority also protects dated slates from incomplete or malformed games.
+    required_matches = max(1, len(slate_games) // 2 + 1)
+    if best_score < required_matches or len(best) != 1:
         return None
     season, week = best[0]
     return season, week, best_score, len(slate_games)

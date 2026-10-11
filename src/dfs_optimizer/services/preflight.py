@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from dfs_optimizer.models import Projection, Slate, Sport
+from dfs_optimizer.models import ContestFormat, Projection, Slate, Sport
 from dfs_optimizer.rules import classic_rules_for, single_game_rules_for
 from .risk import suggest_default_excluded_player_ids
 from .player_context import PlayerContext
@@ -42,7 +43,8 @@ def preflight_lineups(
         if slate.contest_format.value == "classic"
         else single_game_rules_for(slate.platform)
     )
-    current_ids = {player.platform_id for player in slate.players}
+    current_players = {player.platform_id: player for player in slate.players}
+    current_ids = set(current_players)
 
     if expected_lineups is not None and len(lineups) != expected_lineups:
         findings.append(AuditFinding(
@@ -80,11 +82,109 @@ def preflight_lineups(
                 "ERROR", "salary_cap",
                 f"Lineup {number} exceeds the ${rules.salary_cap:,} salary cap.",
             ))
+        expected_salary = 0
+        if slate.contest_format == ContestFormat.CLASSIC:
+            slots = {slot.name: slot for slot in rules.slots}
+            expected_slots = Counter(slot.name for slot in rules.slots)
+            actual_slots = Counter(entry.slot for entry in lineup.entries)
+            if actual_slots != expected_slots:
+                structure_valid = False
+                findings.append(AuditFinding(
+                    "ERROR", "roster_slots",
+                    f"Lineup {number} does not contain the required roster slots.",
+                ))
+            for entry in lineup.entries:
+                current_player = current_players.get(entry.player.platform_id)
+                if current_player is None:
+                    continue
+                expected_salary += current_player.salary
+                slot = slots.get(entry.slot)
+                if slot is None or not slot.accepts(current_player.primary_position):
+                    structure_valid = False
+                    findings.append(AuditFinding(
+                        "ERROR", "slot_eligibility",
+                        f"Lineup {number}: {current_player.name} is not eligible for "
+                        f"the {entry.slot} slot.",
+                    ))
+        else:
+            multiplier_entries = []
+            for entry in lineup.entries:
+                current_player = current_players.get(entry.player.platform_id)
+                if current_player is None:
+                    continue
+                point_multiplier = getattr(entry, "point_multiplier", 1.0)
+                if point_multiplier > 1:
+                    multiplier_entries.append(entry)
+                    expected_salary += (
+                        current_player.multiplier_salary or current_player.salary
+                    )
+                    if (
+                        entry.slot != rules.multiplier_slot
+                        or point_multiplier != rules.multiplier
+                    ):
+                        structure_valid = False
+                        findings.append(AuditFinding(
+                            "ERROR", "multiplier_slot",
+                            f"Lineup {number}: the multiplier entry is not a valid "
+                            f"{rules.multiplier_slot} selection.",
+                        ))
+                else:
+                    expected_salary += current_player.salary
+                    if point_multiplier != 1 or not entry.slot.startswith("FLEX"):
+                        structure_valid = False
+                        findings.append(AuditFinding(
+                            "ERROR", "flex_slot",
+                            f"Lineup {number}: {current_player.name} is not assigned "
+                            "to a valid FLEX slot.",
+                        ))
+            if len(multiplier_entries) != 1:
+                structure_valid = False
+                findings.append(AuditFinding(
+                    "ERROR", "multiplier_count",
+                    f"Lineup {number} has {len(multiplier_entries)} multiplier entries; "
+                    "expected exactly one.",
+                ))
+        if lineup.salary != expected_salary:
+            structure_valid = False
+            findings.append(AuditFinding(
+                "ERROR", "salary_total",
+                f"Lineup {number} reports ${lineup.salary:,}, but its players cost "
+                f"${expected_salary:,}.",
+            ))
+        if expected_salary > rules.salary_cap:
+            structure_valid = False
+            findings.append(AuditFinding(
+                "ERROR", "salary_cap",
+                f"Lineup {number}'s players exceed the ${rules.salary_cap:,} salary cap.",
+            ))
         if len({entry.player.team for entry in lineup.entries}) < rules.minimum_teams:
             structure_valid = False
             findings.append(AuditFinding(
                 "ERROR", "minimum_teams",
                 f"Lineup {number} does not include at least {rules.minimum_teams} teams.",
+            ))
+        maximum_players_per_team = getattr(rules, "maximum_players_per_team", None)
+        if maximum_players_per_team is not None:
+            team_counts = Counter(entry.player.team for entry in lineup.entries)
+            over_limit = [
+                team for team, count in team_counts.items()
+                if count > maximum_players_per_team
+            ]
+            if over_limit:
+                structure_valid = False
+                findings.append(AuditFinding(
+                    "ERROR", "maximum_players_per_team",
+                    f"Lineup {number} exceeds the {maximum_players_per_team}-player "
+                    f"team limit for: {', '.join(sorted(over_limit))}.",
+                ))
+        minimum_games = getattr(rules, "minimum_games", 0)
+        if minimum_games and len(
+            {entry.player.game for entry in lineup.entries}
+        ) < minimum_games:
+            structure_valid = False
+            findings.append(AuditFinding(
+                "ERROR", "minimum_games",
+                f"Lineup {number} does not include at least {minimum_games} games.",
             ))
         for entry in lineup.entries:
             if entry.projection not in projections:
@@ -100,7 +200,9 @@ def preflight_lineups(
                     f"Lineup {number}: {entry.player.name} has a non-positive projection.",
                 ))
     if structure_valid:
-        passed.append("Roster sizes, player IDs, teams, salaries, and projections are valid")
+        passed.append(
+            "Roster sizes, player IDs, teams, games, salaries, and projections are valid"
+        )
 
     if projection_built_at is None:
         findings.append(AuditFinding(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from dfs_optimizer.models import Platform
@@ -74,6 +75,35 @@ class SlateServiceTests(unittest.TestCase):
         )
 
         result = infer_slate_period(slate, "missing-games.csv")
+
+        self.assertIsNone(result)
+
+    def test_undated_slate_requires_majority_of_games_to_match(self) -> None:
+        original = load_uploaded_salary_file(
+            "DKSalaries.csv", (SAMPLES / "DKSalaries.csv").read_bytes()
+        )
+        games = sorted(original.games)[:3]
+        selected_matchups = {game.split()[0] for game in games}
+        slate = replace(
+            original,
+            players=tuple(
+                replace(player, game=player.game.split()[0])
+                for player in original.players
+                if player.game.split()[0] in selected_matchups
+            ),
+            source_name="undated.csv",
+        )
+        first = games[0].split()[0].split("@")
+        with tempfile.TemporaryDirectory() as directory:
+            schedule = Path(directory) / "games.csv"
+            schedule.write_text(
+                "season,game_type,week,gameday,away_team,home_team\n"
+                f"2026,REG,4,2026-10-04,{first[0]},{first[1]}\n"
+                "2026,REG,4,2026-10-04,ATL,CAR\n",
+                encoding="utf-8",
+            )
+
+            result = infer_slate_period(slate, schedule)
 
         self.assertIsNone(result)
 

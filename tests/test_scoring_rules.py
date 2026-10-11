@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from dfs_optimizer.models import OffensiveStatLine, Platform
-from dfs_optimizer.rules import nfl_scoring_for
+from dfs_optimizer.rules import cfb_scoring_for, nfl_scoring_for
 
 
 class NFLScoringRuleTests(unittest.TestCase):
@@ -48,6 +48,20 @@ class NFLScoringRuleTests(unittest.TestCase):
         )
         self.assertEqual(nfl_scoring_for(Platform.FANDUEL).score_offense(stats), -2)
 
+    def test_fanduel_cfb_does_not_apply_nfl_yardage_bonuses(self) -> None:
+        stats = OffensiveStatLine(
+            passing_yards=300,
+            rushing_yards=100,
+            receiving_yards=100,
+        )
+
+        self.assertEqual(
+            cfb_scoring_for(Platform.DRAFTKINGS).score_offense(stats), 41
+        )
+        self.assertEqual(
+            cfb_scoring_for(Platform.FANDUEL).score_offense(stats), 32
+        )
+
     def test_rejects_negative_count(self) -> None:
         with self.assertRaisesRegex(ValueError, "receptions"):
             OffensiveStatLine(receptions=-1)
@@ -55,4 +69,3 @@ class NFLScoringRuleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

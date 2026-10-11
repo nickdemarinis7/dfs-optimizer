@@ -157,5 +157,20 @@ NFL_SCORING_RULES: dict[Platform, NFLScoringRules] = {
 }
 
 
+CFB_SCORING_RULES: dict[Platform, NFLScoringRules] = {
+    Platform.DRAFTKINGS: NFL_SCORING_RULES[Platform.DRAFTKINGS],
+    Platform.FANDUEL: NFLScoringRules(
+        platform=Platform.FANDUEL,
+        points_per_reception=0.5,
+        points_per_fumble_lost=-2,
+        yardage_bonus_points=0,
+    ),
+}
+
+
 def nfl_scoring_for(platform: Platform) -> NFLScoringRules:
     return NFL_SCORING_RULES[platform]
+
+
+def cfb_scoring_for(platform: Platform) -> NFLScoringRules:
+    return CFB_SCORING_RULES[platform]

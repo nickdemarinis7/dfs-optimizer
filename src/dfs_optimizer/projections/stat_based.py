@@ -4,8 +4,8 @@ import re
 import unicodedata
 
 from dfs_optimizer.importers import PlayerStatProjection, TeamDefenseProjection
-from dfs_optimizer.models import Position, Projection, Slate
-from dfs_optimizer.rules import nfl_scoring_for
+from dfs_optimizer.models import Position, Projection, Slate, Sport
+from dfs_optimizer.rules import cfb_scoring_for, nfl_scoring_for
 
 from .baseline import UNAVAILABLE_STATUSES
 
@@ -19,7 +19,11 @@ def build_stat_based_projections(
     forecasts = {
         (_normalize(item.name), item.team): item for item in stat_projections
     }
-    scoring = nfl_scoring_for(slate.platform)
+    scoring = (
+        cfb_scoring_for(slate.platform)
+        if slate.sport == Sport.CFB
+        else nfl_scoring_for(slate.platform)
+    )
     defenses = {item.team: item for item in defense_projections}
     results: list[Projection] = []
     for player in slate.players:

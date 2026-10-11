@@ -13,6 +13,7 @@ from dfs_optimizer.optimization import (
     optimize_single_game_lineup,
 )
 from dfs_optimizer.projections import build_platform_average_projections
+from dfs_optimizer.services import preflight_lineups
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +49,18 @@ class SingleGameTests(unittest.TestCase):
                 self.assertLessEqual(lineup.salary, cap)
                 self.assertEqual(len({entry.player.name for entry in lineup.entries}), 6)
                 self.assertEqual(len({entry.player.team for entry in lineup.entries}), 2)
+
+    def test_single_game_lineup_passes_preflight(self) -> None:
+        projections = build_platform_average_projections(self.fd)
+        lineup = optimize_single_game_lineup(
+            self.fd, match_projections(self.fd, projections)
+        )
+
+        report = preflight_lineups(
+            self.fd, projections, (lineup,), expected_lineups=1
+        )
+
+        self.assertFalse(report.blocking)
 
     def test_generates_unique_lineups_with_multiplier_exposure(self) -> None:
         projections = build_platform_average_projections(self.dk)

@@ -11,7 +11,7 @@ class SalaryImportError(ValueError):
     """Raised when a platform salary file cannot be recognized or parsed."""
 
 
-def import_salary_csv(path: str | Path) -> Slate:
+def import_salary_csv(path: str | Path, sport: Sport | None = None) -> Slate:
     source = Path(path)
     try:
         with source.open(encoding="utf-8-sig", newline="") as handle:
@@ -27,23 +27,26 @@ def import_salary_csv(path: str | Path) -> Slate:
     if {"Name + ID", "TeamAbbrev", "Game Info"}.issubset(headers):
         roster_values = {row.get("Roster Position", "") for row in rows}
         if roster_values == {"CPT", "FLEX"}:
-            return _import_draftkings_single_game(rows, source.name)
-        sport = (
-            Sport.CFB
-            if any("S-FLEX" in value.upper() for value in roster_values)
+            detected_sport = sport or _infer_single_game_sport(rows, source.name)
+            return _import_draftkings_single_game(
+                rows, source.name, sport=detected_sport
+            )
+        detected_sport = sport or (
+            Sport.CFB if any("S-FLEX" in value.upper() for value in roster_values)
             else Sport.NFL
         )
-        return _import_draftkings(rows, source.name, sport=sport)
+        return _import_draftkings(rows, source.name, sport=detected_sport)
     if {"Id", "Nickname", "Team", "Opponent"}.issubset(headers):
         if "MVP 1.5x Salary" in headers:
-            return _import_fanduel_single_game(rows, source.name)
+            detected_sport = sport or _infer_single_game_sport(rows, source.name)
+            return _import_fanduel_single_game(rows, source.name, sport=detected_sport)
         roster_values = {row.get("Roster Position", "") for row in rows}
-        sport = (
+        detected_sport = sport or (
             Sport.CFB
             if any("SUPER FLEX" in value.upper() for value in roster_values)
             else Sport.NFL
         )
-        return _import_fanduel(rows, source.name, sport=sport)
+        return _import_fanduel(rows, source.name, sport=detected_sport)
     raise SalaryImportError(
         f"unrecognized salary file schema in {source}; headers were: "
         + ", ".join(sorted(header for header in headers if header))
@@ -58,9 +61,7 @@ def _import_draftkings(
         try:
             team = row["TeamAbbrev"].strip().upper()
             game = row["Game Info"].strip()
-            matchup = game.split(maxsplit=1)[0]
-            away, home = matchup.split("@", maxsplit=1)
-            opponent = home if team == away else away
+            opponent = _opponent_from_game(game, team)
             players.append(
                 Player(
                     platform_id=row["ID"].strip(),
@@ -97,6 +98,14 @@ def _import_fanduel(
             name = row["Nickname"].strip() or " ".join(
                 part.strip() for part in (row["First Name"], row["Last Name"])
             )
+            team = row["Team"].strip().upper()
+            game = row["Game"].strip()
+            opponent = _opponent_from_game(game, team)
+            listed_opponent = row["Opponent"].strip().upper()
+            if listed_opponent != opponent:
+                raise ValueError(
+                    f"opponent {listed_opponent} does not match {game} for {team}"
+                )
             players.append(
                 Player(
                     platform_id=row["Id"].strip(),
@@ -104,9 +113,9 @@ def _import_fanduel(
                     primary_position=Position.from_platform_value(row["Position"]),
                     roster_positions=_parse_roster_positions(row["Roster Position"]),
                     salary=_parse_salary(row["Salary"]),
-                    team=row["Team"].strip().upper(),
-                    opponent=row["Opponent"].strip().upper(),
-                    game=row["Game"].strip(),
+                    team=team,
+                    opponent=opponent,
+                    game=game,
                     platform_average=_parse_optional_float(row.get("FPPG")),
                     status=_optional_text(row.get("Injury Indicator")),
                     injury_details=_optional_text(row.get("Injury Details")),
@@ -125,7 +134,9 @@ def _import_fanduel(
     )
 
 
-def _import_draftkings_single_game(rows, source_name: str) -> Slate:
+def _import_draftkings_single_game(
+    rows, source_name: str, *, sport: Sport = Sport.NFL
+) -> Slate:
     grouped: dict[tuple[str, str], dict[str, Mapping[str, str]]] = {}
     for row in rows:
         grouped.setdefault((row["Name"].strip(), row["TeamAbbrev"].strip().upper()), {})[
@@ -137,31 +148,44 @@ def _import_draftkings_single_game(rows, source_name: str) -> Slate:
             raise SalaryImportError(f"DraftKings single-game player {name} lacks CPT or FLEX row")
         flex, captain = variants["FLEX"], variants["CPT"]
         game = flex["Game Info"].strip()
-        away, home = game.split(maxsplit=1)[0].split("@", 1)
+        opponent = _opponent_from_game(game, team)
         players.append(Player(
             platform_id=flex["ID"].strip(), name=name,
             primary_position=Position.from_platform_value(flex["Position"]),
             roster_positions=(Position.FLEX,), salary=_parse_salary(flex["Salary"]),
-            team=team, opponent=home if team == away else away, game=game,
+            team=team, opponent=opponent, game=game,
             platform_average=_parse_optional_float(flex.get("AvgPointsPerGame")),
             status=_optional_text(flex.get("Status")),
             multiplier_platform_id=captain["ID"].strip(),
             multiplier_salary=_parse_salary(captain["Salary"]),
         ))
-    return Slate(Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, tuple(players), source_name)
+    return Slate(
+        Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, tuple(players),
+        source_name, sport,
+    )
 
 
-def _import_fanduel_single_game(rows, source_name: str) -> Slate:
+def _import_fanduel_single_game(
+    rows, source_name: str, *, sport: Sport = Sport.NFL
+) -> Slate:
     players = []
     for row_number, row in enumerate(rows, start=2):
         try:
             name = row["Nickname"].strip() or f'{row["First Name"].strip()} {row["Last Name"].strip()}'
+            team = row["Team"].strip().upper()
+            game = row["Game"].strip()
+            opponent = _opponent_from_game(game, team)
+            listed_opponent = row["Opponent"].strip().upper()
+            if listed_opponent != opponent:
+                raise ValueError(
+                    f"opponent {listed_opponent} does not match {game} for {team}"
+                )
             players.append(Player(
                 platform_id=row["Id"].strip(), name=name,
                 primary_position=Position.from_platform_value(row["Position"]),
                 roster_positions=(Position.FLEX,), salary=_parse_salary(row["Salary"]),
-                team=row["Team"].strip().upper(), opponent=row["Opponent"].strip().upper(),
-                game=row["Game"].strip(), platform_average=_parse_optional_float(row.get("FPPG")),
+                team=team, opponent=opponent, game=game,
+                platform_average=_parse_optional_float(row.get("FPPG")),
                 status=_optional_text(row.get("Injury Indicator")),
                 injury_details=_optional_text(row.get("Injury Details")),
                 multiplier_platform_id=row["Id"].strip(),
@@ -169,7 +193,41 @@ def _import_fanduel_single_game(rows, source_name: str) -> Slate:
             ))
         except (KeyError, TypeError, ValueError) as exc:
             raise SalaryImportError(f"invalid FanDuel single-game row {row_number}: {exc}") from exc
-    return Slate(Platform.FANDUEL, ContestFormat.SINGLE_GAME, tuple(players), source_name)
+    return Slate(
+        Platform.FANDUEL, ContestFormat.SINGLE_GAME, tuple(players),
+        source_name, sport,
+    )
+
+
+def _opponent_from_game(game: str, team: str) -> str:
+    matchup = game.strip().split(maxsplit=1)[0].upper()
+    if matchup.count("@") != 1:
+        raise ValueError(f"invalid matchup {game!r}")
+    away, home = (value.strip() for value in matchup.split("@", 1))
+    if not away or not home or away == home:
+        raise ValueError(f"invalid matchup {game!r}")
+    if team == away:
+        return home
+    if team == home:
+        return away
+    raise ValueError(f"team {team} is not part of matchup {away}@{home}")
+
+
+def _infer_single_game_sport(
+    rows: Iterable[Mapping[str, str]], source_name: str
+) -> Sport:
+    if "CFB" in source_name.upper():
+        return Sport.CFB
+    positions = {
+        (row.get("Position") or "").strip().upper()
+        for row in rows
+    }
+    if positions & {"D", "DEF", "DST"}:
+        return Sport.NFL
+    # Official NFL single-game pools include both team defenses. Without one,
+    # the football single-game file is CFB. Callers can explicitly override
+    # this when importing a nonstandard or manually filtered salary file.
+    return Sport.CFB
 
 
 def _parse_roster_positions(value: str) -> tuple[Position, ...]:

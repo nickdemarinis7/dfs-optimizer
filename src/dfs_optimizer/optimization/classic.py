@@ -451,8 +451,25 @@ def _optimize_classic_lineup(
         for variable in team_assignments:
             model.add(variable <= used)
         model.add(used <= sum(team_assignments))
+        if rules.maximum_players_per_team is not None:
+            model.add(sum(team_assignments) <= rules.maximum_players_per_team)
         team_variables.append(used)
     model.add(sum(team_variables) >= rules.minimum_teams)
+
+    if rules.minimum_games:
+        game_variables = []
+        for game in sorted({player.game for player in projected_players}):
+            game_assignments = [
+                variable
+                for (_, player_index), variable in assignments.items()
+                if projected_players[player_index].game == game
+            ]
+            used = model.new_bool_var(f"game_{len(game_variables)}")
+            for variable in game_assignments:
+                model.add(variable <= used)
+            model.add(used <= sum(game_assignments))
+            game_variables.append(used)
+        model.add(sum(game_variables) >= rules.minimum_games)
 
     points_scale = 1_000
     exposure_balance_penalty = round(0.25 * points_scale)

@@ -21,6 +21,8 @@ class RosterRules:
     salary_cap: int
     slots: tuple[RosterSlot, ...]
     minimum_teams: int = 2
+    minimum_games: int = 0
+    maximum_players_per_team: int | None = None
     sport: Sport = Sport.NFL
 
     @property
@@ -51,12 +53,15 @@ CLASSIC_RULES: dict[Platform, RosterRules] = {
         contest_format=ContestFormat.CLASSIC,
         salary_cap=50_000,
         slots=_CLASSIC_SLOTS,
+        minimum_games=2,
     ),
     Platform.FANDUEL: RosterRules(
         platform=Platform.FANDUEL,
         contest_format=ContestFormat.CLASSIC,
         salary_cap=60_000,
         slots=_CLASSIC_SLOTS,
+        minimum_teams=3,
+        maximum_players_per_team=4,
     ),
 }
 
@@ -89,6 +94,7 @@ CFB_CLASSIC_RULES: dict[Platform, RosterRules] = {
         contest_format=ContestFormat.CLASSIC,
         salary_cap=50_000,
         slots=_CFB_DRAFTKINGS_SLOTS,
+        minimum_games=2,
         sport=Sport.CFB,
     ),
     Platform.FANDUEL: RosterRules(
@@ -96,6 +102,8 @@ CFB_CLASSIC_RULES: dict[Platform, RosterRules] = {
         contest_format=ContestFormat.CLASSIC,
         salary_cap=60_000,
         slots=_CFB_FANDUEL_SLOTS,
+        minimum_teams=3,
+        maximum_players_per_team=4,
         sport=Sport.CFB,
     ),
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +24,26 @@ class Projection:
             raise ValueError("projection name cannot be empty")
         if not self.team:
             raise ValueError(f"projection team cannot be empty for {self.name}")
+        numeric_values = {
+            "projected_points": self.projected_points,
+            "floor": self.floor,
+            "ceiling": self.ceiling,
+            "projected_ownership": self.projected_ownership,
+            "p10": self.p10,
+            "p25": self.p25,
+            "p75": self.p75,
+            "p90": self.p90,
+            "bust_probability": self.bust_probability,
+        }
+        non_finite = [
+            field for field, value in numeric_values.items()
+            if value is not None and not math.isfinite(value)
+        ]
+        if non_finite:
+            raise ValueError(
+                f"projection values must be finite for {self.name}: "
+                + ", ".join(non_finite)
+            )
         if self.floor is not None and self.ceiling is not None and self.floor > self.ceiling:
             raise ValueError(f"floor cannot exceed ceiling for {self.name}")
         if self.projected_ownership is not None and not 0 <= self.projected_ownership <= 100:

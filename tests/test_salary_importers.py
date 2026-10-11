@@ -58,8 +58,39 @@ class ImportFailureTests(unittest.TestCase):
             with self.assertRaisesRegex(SalaryImportError, "unrecognized"):
                 import_salary_csv(path)
 
+    def test_rejects_team_that_is_not_in_listed_matchup(self) -> None:
+        content = (
+            "Position,Name + ID,Name,ID,Roster Position,Salary,Game Info,"
+            "TeamAbbrev,AvgPointsPerGame,Status\n"
+            "QB,Test QB (1),Test QB,1,QB,8000,AAA@BBB 10/10/2026 12:00PM ET,CCC,20,\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "DKSalaries.csv"
+            path.write_text(content, encoding="utf-8")
+            with self.assertRaisesRegex(SalaryImportError, "not part of matchup"):
+                import_salary_csv(path)
+
 
 class CollegeFootballImporterTests(unittest.TestCase):
+    def test_detects_draftkings_college_showdown_from_teams(self) -> None:
+        header = (
+            "Position,Name + ID,Name,ID,Roster Position,Salary,Game Info,"
+            "TeamAbbrev,AvgPointsPerGame,Status\n"
+        )
+        content = header + (
+            "QB,Test QB (11),Test QB,11,CPT,12000,AAA@BBB 10/10/2026 8:00PM ET,AAA,20,\n"
+            "QB,Test QB (1),Test QB,1,FLEX,8000,AAA@BBB 10/10/2026 8:00PM ET,AAA,20,\n"
+            "WR,Test WR (22),Test WR,22,CPT,9000,AAA@BBB 10/10/2026 8:00PM ET,BBB,12,\n"
+            "WR,Test WR (2),Test WR,2,FLEX,6000,AAA@BBB 10/10/2026 8:00PM ET,BBB,12,\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "DKSalaries.csv"
+            path.write_text(content, encoding="utf-8")
+            slate = import_salary_csv(path)
+
+        self.assertEqual(slate.sport, Sport.CFB)
+        self.assertEqual(slate.contest_format, ContestFormat.SINGLE_GAME)
+
     def test_detects_draftkings_college_super_flex(self) -> None:
         content = (
             "Position,Name + ID,Name,ID,Roster Position,Salary,Game Info,"

@@ -49,6 +49,34 @@ class PreflightTests(unittest.TestCase):
         self.assertTrue(report.blocking)
         self.assertTrue(any(item.code == "nonpositive_projection" for item in report.findings))
 
+    def test_recomputed_salary_blocks_tampered_total(self) -> None:
+        broken_lineup = replace(self.lineups[0], salary=0)
+
+        report = preflight_lineups(
+            self.slate, self.projections, (broken_lineup,), expected_lineups=1,
+        )
+
+        self.assertTrue(report.blocking)
+        self.assertTrue(any(item.code == "salary_total" for item in report.findings))
+
+    def test_invalid_slot_assignment_blocks_export(self) -> None:
+        entries = list(self.lineups[0].entries)
+        running_back_index = next(
+            index for index, entry in enumerate(entries)
+            if entry.player.primary_position.value == "RB"
+        )
+        entries[running_back_index] = replace(
+            entries[running_back_index], slot="QB"
+        )
+        broken_lineup = replace(self.lineups[0], entries=tuple(entries))
+
+        report = preflight_lineups(
+            self.slate, self.projections, (broken_lineup,), expected_lineups=1,
+        )
+
+        self.assertTrue(report.blocking)
+        self.assertTrue(any(item.code == "slot_eligibility" for item in report.findings))
+
     def test_old_projection_snapshot_warns_without_blocking(self) -> None:
         now = datetime.now(timezone.utc)
         report = preflight_lineups(
