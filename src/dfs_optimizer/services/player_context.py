@@ -78,7 +78,6 @@ def summarize_prelock_context(
 
     unavailable = set()
     questionable = set()
-    backups = set()
     subordinate_skill_players = set()
     for player in slate.players:
         context = context_by_id.get(player.platform_id)
@@ -100,12 +99,6 @@ def summarize_prelock_context(
             or practice in limited_practice
         ):
             questionable.add(player.platform_id)
-        if (
-            player.primary_position == Position.QB
-            and context is not None
-            and (context.depth_chart_position or 1) > 1
-        ):
-            backups.add(player.platform_id)
         if context is not None and (
             (
                 player.primary_position == Position.TE
@@ -117,6 +110,24 @@ def summarize_prelock_context(
             )
         ):
             subordinate_skill_players.add(player.platform_id)
+
+    available_qb1_teams = {
+        player.team
+        for player in slate.players
+        if player.primary_position == Position.QB
+        and player.platform_id not in unavailable
+        and (context := context_by_id.get(player.platform_id)) is not None
+        and context.depth_chart_position == 1
+    }
+    backups = {
+        player.platform_id
+        for player in slate.players
+        if player.primary_position == Position.QB
+        and player.team in available_qb1_teams
+        and player.platform_id not in unavailable
+        and (context := context_by_id.get(player.platform_id)) is not None
+        and (context.depth_chart_position or 1) > 1
+    }
 
     current_time = now or datetime.now(timezone.utc)
     if current_time.tzinfo is None:

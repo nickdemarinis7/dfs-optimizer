@@ -641,6 +641,7 @@ if generate_clicked:
             limited_ids | live_limited
         ) - locked_ids - effective_excluded_ids
         effective_player_exposure = maximum_player_exposure
+        effective_minimum_unique = minimum_unique
         effective_ownership_penalty = (
             .025 if slate.sport == Sport.CFB and ownership_coverage >= .75
             else .05 if ownership_coverage >= .75 else 0
@@ -652,10 +653,8 @@ if generate_clicked:
                     locked_player_ids=locked_ids,
                     excluded_player_ids=effective_excluded_ids,
                     limited_player_ids=effective_limited_ids,
-                    fragile_player_ids=(
-                        live_limited if slate.sport == Sport.CFB else frozenset()
-                    ),
-                    maximum_fragile_players=2 if slate.sport == Sport.CFB else None,
+                    fragile_player_ids=live_limited,
+                    maximum_fragile_players=2,
                     qb_stack_size=1 if require_qb_stack else 0,
                     require_opponent_bring_back=require_qb_stack and require_bring_back,
                     ceiling_weight=.3, minimum_stack_projection=7 if require_qb_stack else 0,
@@ -741,17 +740,16 @@ if generate_clicked:
                             if include_ceiling_lineup else None
                         ),
                     )
-                if len(lineups) != lineup_count and effective_limited_ids:
-                    effective_limited_ids = frozenset()
-                    relaxed_settings = replace(
-                        settings, limited_player_ids=effective_limited_ids
-                    )
+                if len(lineups) != lineup_count and effective_minimum_unique > 1:
+                    effective_minimum_unique = 1
                     lineups = generate_single_game_lineups(
                         slate, matches, lineup_count,
-                        minimum_unique_players=minimum_unique,
+                        minimum_unique_players=effective_minimum_unique,
                         maximum_player_exposure=maximum_player_exposure,
                         maximum_multiplier_exposure=maximum_multiplier_exposure,
-                        settings=relaxed_settings,
+                        settings=replace(
+                            settings, limited_player_ids=effective_limited_ids
+                        ),
                         lineup_ceiling_weights=(
                             (*([.3] * (lineup_count - 1)), .7)
                             if include_ceiling_lineup else None
@@ -759,22 +757,18 @@ if generate_clicked:
                     )
                     if len(lineups) == lineup_count:
                         generation_warning = (
-                            "The requested portfolio was infeasible with the selected Max once "
-                            "players, so those caps were relaxed. Player exposure, uniqueness, "
-                            "and Captain/MVP limits are still enforced."
+                            "The requested Showdown uniqueness was infeasible, so the portfolio "
+                            "uses one-player uniqueness. Player exposure, Max once, and distinct "
+                            "Captain/MVP limits are still enforced."
                         )
-                if len(lineups) != lineup_count and maximum_player_exposure < 1:
-                    effective_player_exposure = 1.0
+                if len(lineups) != lineup_count and effective_limited_ids:
                     effective_limited_ids = frozenset()
-                    relaxed_settings = replace(
-                        settings, limited_player_ids=effective_limited_ids
-                    )
                     lineups = generate_single_game_lineups(
                         slate, matches, lineup_count,
-                        minimum_unique_players=minimum_unique,
-                        maximum_player_exposure=effective_player_exposure,
+                        minimum_unique_players=effective_minimum_unique,
+                        maximum_player_exposure=maximum_player_exposure,
                         maximum_multiplier_exposure=maximum_multiplier_exposure,
-                        settings=relaxed_settings,
+                        settings=replace(settings, limited_player_ids=frozenset()),
                         lineup_ceiling_weights=(
                             (*([.3] * (lineup_count - 1)), .7)
                             if include_ceiling_lineup else None
@@ -782,11 +776,17 @@ if generate_clicked:
                     )
                     if len(lineups) == lineup_count:
                         generation_warning = (
-                            "The requested Showdown exposure caps were infeasible. Max once caps "
-                            "were removed and core players may appear in all lineups. Uniqueness "
-                            "and distinct Captain/MVP limits are still enforced."
+                            "The requested portfolio remained infeasible after reducing uniqueness, "
+                            "so Max once caps were relaxed. Player exposure and distinct "
+                            "Captain/MVP limits are still enforced."
                         )
             if len(lineups) != lineup_count:
+                if slate.contest_format == ContestFormat.SINGLE_GAME:
+                    raise RuntimeError(
+                        f"Only {len(lineups)} of {lineup_count} requested lineups could satisfy "
+                        "these settings. Player exposure was not relaxed automatically; raise it "
+                        "explicitly or review excluded players."
+                    )
                 raise RuntimeError(
                     f"Only {len(lineups)} of {lineup_count} requested lineups could satisfy these settings. "
                     "Try raising exposure or lowering uniqueness."
@@ -795,7 +795,8 @@ if generate_clicked:
         lineup_settings = {
             "strategy_version": "tournament-defaults-v3",
             "portfolio_mode": portfolio_label, "lineups": lineup_count,
-            "minimum_unique_players": minimum_unique,
+            "minimum_unique_players": effective_minimum_unique,
+            "requested_minimum_unique_players": minimum_unique,
             "maximum_player_exposure": effective_player_exposure,
             "locked_players": tuple(sorted(players[player_id].name for player_id in locked_ids)),
             "excluded_players": tuple(sorted(
@@ -856,7 +857,7 @@ if generate_clicked:
             "ownership_coverage": ownership_coverage,
             "ownership_penalty": effective_ownership_penalty,
             "maximum_fragile_players_per_lineup": (
-                2 if slate.sport == Sport.CFB and slate.contest_format == ContestFormat.CLASSIC
+                2 if slate.contest_format == ContestFormat.CLASSIC
                 else None
             ),
             "lineup_risk_profiles": (

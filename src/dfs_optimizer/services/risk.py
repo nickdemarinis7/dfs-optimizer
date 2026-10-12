@@ -74,12 +74,13 @@ def suggest_default_excluded_player_ids(
                 backups.add(quarterback.platform_id)
 
     for team, quarterbacks in quarterbacks_by_team.items():
-        has_qb1 = any(
+        has_available_qb1 = any(
             context_by_id.get(player.platform_id)
             and context_by_id[player.platform_id].depth_chart_position == 1
+            and player.platform_id not in unavailable
             for player in quarterbacks
         )
-        if has_qb1:
+        if has_available_qb1:
             backups.update(
                 player.platform_id
                 for player in quarterbacks
@@ -97,10 +98,11 @@ def suggest_max_once_player_ids(
 ) -> frozenset[str]:
     """Identify fragile values that should not become a multi-lineup core.
 
-    This is deliberately conservative: a player is suggested only when a
-    historical floor near zero is paired with a usable but sub-10-point median.
-    Projections without floor evidence remain visible signals but are not
-    automatically constrained. Users can remove any suggestion in the builder.
+    This is deliberately conservative: a player is suggested when a historical
+    floor near zero is paired with a usable but sub-10-point median, or when an
+    NFL skill player has both a sub-10-point median and a high modeled bust
+    probability. Projections without either risk signal remain available.
+    Users can remove any suggestion in the builder.
     """
     by_id = {
         projection.platform_id: projection
@@ -115,6 +117,15 @@ def suggest_max_once_player_ids(
         and projection.floor <= 1
         and 2 <= projection.projected_points < 10
     }
+    if slate.sport == Sport.NFL:
+        suggestions.update(
+            player.platform_id
+            for player in slate.players
+            if player.primary_position in {Position.RB, Position.WR, Position.TE}
+            and (projection := by_id.get(player.platform_id)) is not None
+            and 2 <= projection.projected_points < 10
+            and (projection.bust_probability or 0) >= .45
+        )
     if slate.sport == Sport.CFB:
         suggestions.update(
             player.platform_id

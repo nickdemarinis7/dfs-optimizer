@@ -6,6 +6,7 @@ import unittest
 from dfs_optimizer.importers import import_salary_csv
 from dfs_optimizer.models import ContestFormat, Platform, Player, Position, Projection, Slate, Sport
 from dfs_optimizer.services import suggest_max_once_player_ids
+from dfs_optimizer.services.player_context import PlayerContext
 from dfs_optimizer.services.risk import suggest_default_excluded_player_ids
 
 
@@ -13,6 +14,42 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PortfolioRiskTests(unittest.TestCase):
+    def test_nfl_high_bust_skill_player_is_suggested_max_once(self) -> None:
+        player = Player(
+            "fragile", "Fragile Tight End", Position.TE,
+            (Position.TE, Position.FLEX), 3500, "AAA", "BBB", "AAA@BBB",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.CLASSIC, (player,), "test", Sport.NFL
+        )
+
+        suggestions = suggest_max_once_player_ids(slate, (
+            Projection(
+                player.name, player.team, 7.5, platform_id=player.platform_id,
+                ceiling=18, bust_probability=.5,
+            ),
+        ))
+
+        self.assertIn(player.platform_id, suggestions)
+
+    def test_nfl_high_bust_signal_does_not_limit_strong_tight_end(self) -> None:
+        player = Player(
+            "starter", "Starting Tight End", Position.TE,
+            (Position.TE, Position.FLEX), 6500, "AAA", "BBB", "AAA@BBB",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.CLASSIC, (player,), "test", Sport.NFL
+        )
+
+        suggestions = suggest_max_once_player_ids(slate, (
+            Projection(
+                player.name, player.team, 14, platform_id=player.platform_id,
+                floor=5, ceiling=25, bust_probability=.5,
+            ),
+        ))
+
+        self.assertNotIn(player.platform_id, suggestions)
+
     def test_cfb_fragile_skill_player_is_suggested_max_once(self) -> None:
         player = Player(
             "fragile", "Fragile Receiver", Position.WR,
@@ -105,6 +142,34 @@ class PortfolioRiskTests(unittest.TestCase):
         self.assertIn("out-starter", suggestions)
         self.assertNotIn("replacement", suggestions)
         self.assertNotIn("package", suggestions)
+
+    def test_does_not_exclude_qb2_when_depth_chart_qb1_is_out(self) -> None:
+        players = (
+            Player(
+                "out-starter", "Out starter", Position.QB, (Position.QB,),
+                11000, "BAL", "ATL", "BAL@ATL", status="OUT",
+            ),
+            Player(
+                "replacement", "Replacement", Position.QB, (Position.QB,),
+                8800, "BAL", "ATL", "BAL@ATL",
+            ),
+        )
+        slate = Slate(Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, players, "test")
+        projections = (
+            Projection("Out starter", "BAL", 20, platform_id="out-starter"),
+            Projection("Replacement", "BAL", 5, platform_id="replacement"),
+        )
+        contexts = (
+            PlayerContext("out-starter", 1, "OUT", None, False),
+            PlayerContext("replacement", 2, None, None, True),
+        )
+
+        suggestions = suggest_default_excluded_player_ids(
+            slate, projections, contexts
+        )
+
+        self.assertIn("out-starter", suggestions)
+        self.assertNotIn("replacement", suggestions)
 
 
 if __name__ == "__main__":

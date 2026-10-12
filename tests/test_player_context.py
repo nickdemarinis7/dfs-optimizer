@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from dfs_optimizer.models import ContestFormat, Platform, Player, Position, Projection, Slate
 from dfs_optimizer.services.player_context import (
+    PlayerContext,
     match_player_context,
     summarize_prelock_context,
 )
@@ -15,6 +16,53 @@ from dfs_optimizer.services.risk import (
 
 
 class PlayerContextTests(unittest.TestCase):
+    def test_out_qb1_makes_active_qb2_replacement_not_backup(self) -> None:
+        players = (
+            Player(
+                "qb1", "Out starter", Position.QB, (Position.QB,),
+                10800, "BAL", "ATL", "BAL@ATL", status="OUT",
+            ),
+            Player(
+                "qb2", "Replacement", Position.QB, (Position.QB,),
+                8800, "BAL", "ATL", "BAL@ATL",
+            ),
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, players, "test"
+        )
+        contexts = (
+            PlayerContext("qb1", 1, "OUT", None, False),
+            PlayerContext("qb2", 2, None, None, True),
+        )
+
+        summary = summarize_prelock_context(slate, contexts)
+
+        self.assertIn("qb1", summary.unavailable_player_ids)
+        self.assertNotIn("qb2", summary.backup_quarterback_ids)
+
+    def test_active_qb1_keeps_qb2_flagged_as_backup(self) -> None:
+        players = (
+            Player(
+                "qb1", "Starter", Position.QB, (Position.QB,),
+                10800, "BAL", "ATL", "BAL@ATL",
+            ),
+            Player(
+                "qb2", "Backup", Position.QB, (Position.QB,),
+                5000, "BAL", "ATL", "BAL@ATL",
+            ),
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, players, "test"
+        )
+        contexts = (
+            PlayerContext("qb1", 1, None, None, True),
+            PlayerContext("qb2", 2, None, None, True),
+        )
+
+        summary = summarize_prelock_context(slate, contexts)
+
+        self.assertIn("qb2", summary.backup_quarterback_ids)
+
     def setUp(self) -> None:
         self.players = (
             Player("dak", "Dak Prescott", Position.QB, (Position.QB,), 15000, "DAL", "TB", "DAL@TB"),

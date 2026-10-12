@@ -8,6 +8,53 @@ from dfs_optimizer.services.role_adjustments import apply_current_role_adjustmen
 
 
 class CurrentRoleAdjustmentTests(unittest.TestCase):
+    def test_promotes_replacement_qb_when_qb1_is_out(self) -> None:
+        players = (
+            Player(
+                "qb1", "Injured starter", Position.QB, (Position.QB,),
+                10800, "BAL", "ATL", "BAL@ATL", status="OUT",
+            ),
+            Player(
+                "qb2", "Replacement", Position.QB, (Position.QB,),
+                8800, "BAL", "ATL", "BAL@ATL",
+            ),
+            Player(
+                "qb3", "Third string", Position.QB, (Position.QB,),
+                5000, "BAL", "ATL", "BAL@ATL",
+            ),
+        )
+        slate = Slate(Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, players, "test")
+        projections = (
+            Projection(
+                "Injured starter", "BAL", 20, platform_id="qb1",
+                floor=10, ceiling=30, p10=7, p25=12, p75=25, p90=32,
+                bust_probability=.15,
+            ),
+            Projection(
+                "Replacement", "BAL", 4, platform_id="qb2",
+                floor=1, ceiling=12, p10=.5, p25=2, p75=7, p90=13,
+                bust_probability=.40,
+            ),
+            Projection("Third string", "BAL", 2, platform_id="qb3"),
+        )
+        contexts = (
+            PlayerContext("qb1", 1, "OUT", None, False),
+            PlayerContext("qb2", 2, None, None, True),
+            PlayerContext("qb3", 3, None, None, True),
+        )
+
+        adjusted, audit = apply_current_role_adjustments(
+            slate, projections, contexts
+        )
+
+        by_id = {item.platform_id: item for item in adjusted}
+        self.assertEqual(by_id["qb2"].projected_points, 14)
+        self.assertEqual(by_id["qb2"].floor, 7)
+        self.assertEqual(by_id["qb2"].ceiling, 21)
+        self.assertEqual(by_id["qb3"].projected_points, 2)
+        self.assertEqual(len(audit), 1)
+        self.assertIn("replacement QB", audit[0].reason)
+
     def test_reduces_backup_tight_end_behind_active_te1(self) -> None:
         players = (
             Player("te1", "Starter", Position.TE, (Position.TE,), 6000, "LV", "NE", "LV@NE"),
