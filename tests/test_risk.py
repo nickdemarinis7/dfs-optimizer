@@ -14,6 +14,48 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PortfolioRiskTests(unittest.TestCase):
+    def test_excludes_extreme_zero_floor_showdown_punt_by_default(self) -> None:
+        player = Player(
+            "punt", "Zero Floor Receiver", Position.WR,
+            (Position.WR, Position.FLEX), 1000, "LA", "BUF", "BUF@LA",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, (player,), "test"
+        )
+        projection = Projection(
+            player.name, player.team, 4.4, platform_id=player.platform_id,
+            floor=0, ceiling=10, p10=0, p25=0, p75=4.4, p90=10,
+            bust_probability=.72,
+        )
+        context = PlayerContext("punt", 3, None, None, True)
+
+        suggestions = suggest_default_excluded_player_ids(
+            slate, (projection,), (context,)
+        )
+
+        self.assertIn(player.platform_id, suggestions)
+
+    def test_keeps_showdown_punt_with_demonstrated_floor(self) -> None:
+        player = Player(
+            "punt", "Useful Punt", Position.RB,
+            (Position.RB, Position.FLEX), 2000, "BUF", "LA", "BUF@LA",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, (player,), "test"
+        )
+        projection = Projection(
+            player.name, player.team, 4.5, platform_id=player.platform_id,
+            floor=2.5, ceiling=8, p10=2, p25=2.5, p75=6, p90=8,
+            bust_probability=.10,
+        )
+        context = PlayerContext("punt", 3, None, None, True)
+
+        suggestions = suggest_default_excluded_player_ids(
+            slate, (projection,), (context,)
+        )
+
+        self.assertNotIn(player.platform_id, suggestions)
+
     def test_nfl_high_bust_skill_player_is_suggested_max_once(self) -> None:
         player = Player(
             "fragile", "Fragile Tight End", Position.TE,

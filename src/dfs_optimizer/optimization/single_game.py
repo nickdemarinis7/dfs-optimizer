@@ -47,8 +47,11 @@ class SingleGameOptimizationSettings:
     require_multiplier_receiver_qb: bool = False
     ceiling_weight: float = 0.0
     ownership_penalty: float = 0.0
+    bust_probability_penalty: float = 0.0
     excluded_player_ids: frozenset[str] = frozenset()
     limited_player_ids: frozenset[str] = frozenset()
+    fragile_player_ids: frozenset[str] = frozenset()
+    maximum_fragile_players: int | None = None
 
     def __post_init__(self) -> None:
         if self.minimum_multiplier_ceiling < 0:
@@ -67,6 +70,10 @@ class SingleGameOptimizationSettings:
             raise ValueError("ceiling_weight must be between 0 and 1")
         if self.ownership_penalty < 0:
             raise ValueError("ownership_penalty cannot be negative")
+        if self.bust_probability_penalty < 0:
+            raise ValueError("bust_probability_penalty cannot be negative")
+        if self.maximum_fragile_players is not None and self.maximum_fragile_players < 0:
+            raise ValueError("maximum_fragile_players cannot be negative")
 
 
 def optimize_single_game_lineup(slate: Slate, projection_matches: ProjectionMatchResult, rules: SingleGameRules | None = None, settings: SingleGameOptimizationSettings | None = None) -> OptimizedSingleGameLineup:
@@ -220,10 +227,12 @@ def generate_single_game_3max_portfolio(
             projection = entry.projection
             upper = projection.ceiling or projection.projected_points
             ownership = projection.projected_ownership or 0
+            bust_probability = projection.bust_probability or 0
             total += (
                 projection.projected_points * (1 - role_settings.ceiling_weight)
                 + upper * role_settings.ceiling_weight
                 - ownership * role_settings.ownership_penalty
+                - bust_probability * role_settings.bust_probability_penalty
             ) * entry.point_multiplier
         return total
 
@@ -310,6 +319,12 @@ def _optimize_single_game_lineup(slate: Slate, projection_matches: ProjectionMat
             for i, player in enumerate(players)
             if player.primary_position in {Position.K, Position.DST}
         ) <= settings.maximum_kickers_and_defenses)
+    if settings.maximum_fragile_players is not None:
+        model.add(sum(
+            multiplier[i] + flex[i]
+            for i, player in enumerate(players)
+            if player.platform_id in settings.fragile_player_ids
+        ) <= settings.maximum_fragile_players)
     if settings.require_multiplier_receiver_qb:
         for index, player in enumerate(players):
             if player.primary_position not in {Position.WR, Position.TE}:
@@ -343,10 +358,12 @@ def _optimize_single_game_lineup(slate: Slate, projection_matches: ProjectionMat
         projection = projection_matches.by_player_id[player.platform_id]
         ceiling = projection.ceiling if projection.ceiling is not None else projection.projected_points
         ownership = projection.projected_ownership or 0
+        bust_probability = projection.bust_probability or 0
         return (
             projection.projected_points * (1 - settings.ceiling_weight)
             + ceiling * settings.ceiling_weight
             - ownership * settings.ownership_penalty
+            - bust_probability * settings.bust_probability_penalty
         )
     model.maximize(sum(round(objective_points(p) * rules.multiplier * scale) * multiplier[i] + round(objective_points(p) * scale) * flex[i] for i, p in enumerate(players)))
     solver = cp_model.CpSolver()

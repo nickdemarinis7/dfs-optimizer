@@ -690,6 +690,12 @@ if generate_clicked:
                     )
                 )
             else:
+                showdown_fragile_ids = frozenset(
+                    player_id
+                    for player_id in live_limited
+                    if players[player_id].primary_position
+                    in {Position.RB, Position.WR, Position.TE}
+                )
                 settings = SingleGameOptimizationSettings(
                     multiplier_positions=frozenset({Position.QB, Position.RB, Position.WR, Position.TE}),
                     # Avoid a brittle cutoff like Week 5's Bucky Irving projection:
@@ -701,6 +707,9 @@ if generate_clicked:
                     maximum_dst_opponents=1, require_multiplier_receiver_qb=True,
                     ceiling_weight=.3, excluded_player_ids=effective_excluded_ids,
                     limited_player_ids=effective_limited_ids,
+                    fragile_player_ids=showdown_fragile_ids,
+                    maximum_fragile_players=1,
+                    bust_probability_penalty=.5,
                     ownership_penalty=effective_ownership_penalty,
                 )
                 use_tuned_3max = (
@@ -820,7 +829,10 @@ if generate_clicked:
             "cfb_game_lines_adjustment_cap": (
                 .06 if cfb_game_environments else None
             ),
-            "player_context_coverage": len(live_context) / max(1, len(players)),
+            "player_context_coverage": (
+                len({item.platform_id for item in live_context} & players.keys())
+                / max(1, len(players))
+            ),
             "player_context_source": "Sleeper daily player map" if live_context else None,
             "player_context_checked_at": (
                 st.session_state["player_context_built_at"].isoformat()

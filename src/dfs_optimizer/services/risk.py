@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dfs_optimizer.models import Position, Projection, Slate, Sport
+from dfs_optimizer.models import ContestFormat, Position, Projection, Slate, Sport
 from .player_context import PlayerContext
 
 
@@ -88,7 +88,24 @@ def suggest_default_excluded_player_ids(
                 and (context_by_id[player.platform_id].depth_chart_position or 1) > 1
             )
 
-    return frozenset(unavailable | backups)
+    extreme_showdown_punts: set[str] = set()
+    if slate.contest_format == ContestFormat.SINGLE_GAME:
+        extreme_showdown_punts.update(
+            player.platform_id
+            for player in slate.players
+            if player.primary_position in {Position.RB, Position.WR, Position.TE}
+            and (projection := by_id.get(player.platform_id)) is not None
+            and projection.projected_points < 5
+            and projection.floor is not None
+            and projection.floor <= .5
+            and projection.p25 is not None
+            and projection.p25 <= .5
+            and (projection.bust_probability or 0) >= .70
+            and (context := context_by_id.get(player.platform_id)) is not None
+            and (context.depth_chart_position or 0) >= 3
+        )
+
+    return frozenset(unavailable | backups | extreme_showdown_punts)
 
 
 def suggest_max_once_player_ids(

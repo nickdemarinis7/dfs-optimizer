@@ -19,6 +19,10 @@ def apply_app_style() -> None:
             --ls-soft: rgba(109, 40, 217, .09);
             --ls-mark-start: #111827;
             --ls-mark-end: #6d28d9;
+            --ls-ink: #111827;
+            --ls-muted: #64748b;
+            --ls-line: rgba(148, 163, 184, .22);
+            --ls-surface: rgba(255, 255, 255, .82);
         }
         /* A focused workspace that still gives dense lineup tables room. */
         .stMainBlockContainer,
@@ -32,7 +36,11 @@ def apply_app_style() -> None:
 
         /* A restrained product canvas and crisp type hierarchy. */
         .stApp {
-            background: #f7f8fa;
+            background:
+                radial-gradient(circle at 8% 2%, rgba(var(--ls-primary-rgb), .10), transparent 27rem),
+                radial-gradient(circle at 96% 18%, rgba(var(--ls-secondary-rgb), .065), transparent 24rem),
+                linear-gradient(180deg, #fbfbfd 0%, #f7f8fa 44%, #f4f5f7 100%);
+            background-attachment: fixed;
         }
         h1, h2, h3, p, label, button, input {
             letter-spacing: -0.012em;
@@ -51,13 +59,14 @@ def apply_app_style() -> None:
             box-sizing: border-box;
             padding: .55rem .65rem;
             margin: 0 0 2.5rem;
-            border: 1px solid #e5e7eb;
-            border-top: 3px solid var(--ls-secondary);
-            border-radius: 18px;
-            background: rgba(255, 255, 255, .94);
-            box-shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 8px 30px rgba(15, 23, 42, .045);
-            backdrop-filter: blur(14px);
-            -webkit-backdrop-filter: blur(14px);
+            border: 1px solid rgba(255, 255, 255, .78);
+            border-radius: 20px;
+            background: rgba(255, 255, 255, .76);
+            box-shadow:
+                0 1px 0 rgba(255, 255, 255, .9) inset,
+                0 14px 40px rgba(15, 23, 42, .08);
+            backdrop-filter: blur(22px) saturate(150%);
+            -webkit-backdrop-filter: blur(22px) saturate(150%);
         }
         .st-key-lineup-studio-topbar .stButton > button {
             min-height: 2.25rem;
@@ -96,10 +105,13 @@ def apply_app_style() -> None:
             place-items: center;
             width: 2.1rem;
             height: 2.1rem;
-            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, .24);
+            border-radius: 11px;
             color: white;
             background: linear-gradient(145deg, var(--ls-mark-start), var(--ls-mark-end));
-            box-shadow: 0 5px 14px rgba(var(--ls-primary-rgb), .2);
+            box-shadow:
+                0 1px 0 rgba(255, 255, 255, .25) inset,
+                0 7px 18px rgba(var(--ls-primary-rgb), .24);
             font-size: .68rem;
             letter-spacing: -.04em;
         }
@@ -136,15 +148,15 @@ def apply_app_style() -> None:
         .lineup-studio-summary {
             padding: .95rem 1.1rem;
             margin: .25rem 0 1.75rem;
-            border: 1px solid rgba(var(--ls-primary-rgb), .14);
-            border-left: 4px solid var(--ls-primary);
-            border-radius: 14px;
+            border: 1px solid rgba(var(--ls-primary-rgb), .13);
+            border-radius: 16px;
             background: linear-gradient(
-                110deg,
-                var(--ls-soft),
-                rgba(var(--ls-secondary-rgb), .035) 58%,
-                #fff
+                115deg,
+                rgba(var(--ls-primary-rgb), .12),
+                rgba(255,255,255,.88) 52%,
+                rgba(var(--ls-secondary-rgb), .055)
             );
+            box-shadow: 0 12px 34px rgba(15, 23, 42, .055);
         }
         .lineup-studio-summary strong {
             display: block;
@@ -158,12 +170,40 @@ def apply_app_style() -> None:
             font-size: .82rem;
         }
         .lineup-studio-hero {
-            margin: .1rem 0 2rem;
+            position: relative;
+            isolation: isolate;
+            overflow: hidden;
+            padding: 1.25rem 0 1.4rem;
+            margin: -.25rem 0 1.5rem;
+        }
+        .lineup-studio-hero::before {
+            content: "";
+            position: absolute;
+            z-index: -1;
+            top: .2rem;
+            left: 0;
+            width: 3.2rem;
+            height: .28rem;
+            border-radius: 999px;
+            background: linear-gradient(90deg, var(--ls-primary), var(--ls-secondary));
+            box-shadow: 0 0 24px rgba(var(--ls-primary-rgb), .24);
+        }
+        .lineup-studio-hero::after {
+            content: "";
+            position: absolute;
+            z-index: -2;
+            width: 17rem;
+            height: 17rem;
+            top: -10rem;
+            right: -4rem;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(var(--ls-primary-rgb), .15), transparent 68%);
+            filter: blur(2px);
         }
         .lineup-studio-hero h1 {
             max-width: 18ch;
             margin: 0 0 .55rem;
-            color: #111827;
+            color: var(--ls-ink);
             font-size: clamp(2.25rem, 5vw, 3.45rem);
             font-weight: 720;
             line-height: 1.02;
@@ -172,7 +212,7 @@ def apply_app_style() -> None:
         .lineup-studio-hero p {
             max-width: 34rem;
             margin: 0;
-            color: #64748b;
+            color: var(--ls-muted);
             font-size: 1rem;
             line-height: 1.55;
             letter-spacing: -.018em;
@@ -230,18 +270,23 @@ def apply_app_style() -> None:
             border: 1px solid rgba(var(--ls-primary-rgb), .10);
             border-radius: 999px;
             color: #505055;
-            background: rgba(255,255,255,.74);
+            background: rgba(255,255,255,.68);
             font-size: .78rem;
             font-weight: 560;
-            box-shadow: 0 4px 14px rgba(30, 45, 65, .045);
+            box-shadow: 0 6px 20px rgba(30, 45, 65, .05);
+            backdrop-filter: blur(10px);
         }
 
         /* Quiet, consistent surfaces instead of a stack of decorative boxes. */
         [data-testid="stVerticalBlockBorderWrapper"] {
-            border: 1px solid #e5e7eb;
-            background: #fff;
-            box-shadow: 0 1px 2px rgba(15, 23, 42, .025), 0 8px 24px rgba(15, 23, 42, .035);
-            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, .9);
+            background: var(--ls-surface);
+            box-shadow:
+                0 1px 0 rgba(255, 255, 255, .9) inset,
+                0 14px 38px rgba(15, 23, 42, .065);
+            border-radius: 18px;
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
         }
         [data-testid="stMetric"] { padding: .15rem 0; }
         [data-testid="stMetricValue"] {
@@ -258,7 +303,9 @@ def apply_app_style() -> None:
         }
         [data-testid="stBaseButton-primary"] {
             background: linear-gradient(135deg, var(--ls-primary), var(--ls-primary-dark));
-            box-shadow: 0 5px 14px rgba(var(--ls-primary-rgb), .16);
+            box-shadow:
+                0 1px 0 rgba(255,255,255,.2) inset,
+                0 8px 20px rgba(var(--ls-primary-rgb), .22);
         }
         .stButton > button:hover, .stDownloadButton > button:hover {
             transform: translateY(-1px);
@@ -282,15 +329,19 @@ def apply_app_style() -> None:
             color: #3a3a3c;
         }
         [data-testid="stFileUploaderDropzone"] {
-            background: linear-gradient(135deg, rgba(255,255,255,.96), rgba(245,248,253,.96));
-            border: 1px dashed #b7c8dc;
-            border-radius: 14px;
+            min-height: 9rem;
+            background:
+                radial-gradient(circle at 12% 20%, rgba(var(--ls-primary-rgb), .10), transparent 12rem),
+                rgba(255,255,255,.76);
+            border: 1.5px dashed rgba(var(--ls-primary-rgb), .34);
+            border-radius: 18px;
+            box-shadow: 0 12px 32px rgba(15, 23, 42, .045);
         }
         [data-testid="stDataFrame"] {
             border: 1px solid rgba(210, 210, 215, .5);
             border-radius: 12px;
             overflow: hidden;
-            box-shadow: 0 8px 24px rgba(30, 45, 65, .04);
+            box-shadow: 0 12px 30px rgba(30, 45, 65, .055);
         }
         [data-testid="stAlert"] {
             border: 0;

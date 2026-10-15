@@ -103,6 +103,58 @@ class SingleGameTests(unittest.TestCase):
         self.assertEqual(len(lineups), 3)
         self.assertLessEqual(appearances, 1)
 
+    def test_limits_showdown_lineup_to_one_fragile_skill_player(self) -> None:
+        projections = build_platform_average_projections(self.dk)
+        matches = match_projections(self.dk, projections)
+        baseline = optimize_single_game_lineup(self.dk, matches)
+        fragile_ids = frozenset(
+            entry.player.platform_id
+            for entry in baseline.entries
+            if entry.player.primary_position in {Position.RB, Position.WR, Position.TE}
+        )
+        self.assertGreaterEqual(len(fragile_ids), 2)
+
+        lineup = optimize_single_game_lineup(
+            self.dk,
+            matches,
+            settings=SingleGameOptimizationSettings(
+                fragile_player_ids=fragile_ids,
+                maximum_fragile_players=1,
+            ),
+        )
+
+        selected_fragile = sum(
+            entry.player.platform_id in fragile_ids for entry in lineup.entries
+        )
+        self.assertLessEqual(selected_fragile, 1)
+
+    def test_bust_penalty_avoids_an_extreme_risk_when_possible(self) -> None:
+        projections = build_platform_average_projections(self.dk)
+        matches = match_projections(self.dk, projections)
+        baseline = optimize_single_game_lineup(self.dk, matches)
+        penalized_id = baseline.entries[-1].player.platform_id
+        risky_matches = replace(
+            matches,
+            by_player_id={
+                player_id: replace(
+                    projection,
+                    bust_probability=1 if player_id == penalized_id else 0,
+                )
+                for player_id, projection in matches.by_player_id.items()
+            },
+        )
+
+        lineup = optimize_single_game_lineup(
+            self.dk,
+            risky_matches,
+            settings=SingleGameOptimizationSettings(bust_probability_penalty=100),
+        )
+
+        self.assertNotIn(
+            penalized_id,
+            {entry.player.platform_id for entry in lineup.entries},
+        )
+
     def test_can_penalize_high_projected_ownership(self) -> None:
         projections = build_platform_average_projections(self.dk)
         matches = match_projections(self.dk, projections)
