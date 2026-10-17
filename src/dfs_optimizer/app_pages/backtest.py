@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -12,9 +13,14 @@ from dfs_optimizer.backtesting import (
     import_player_results_content,
 )
 from dfs_optimizer.services.results_review import (
+    CapturedSubmission,
+    SavedPortfolio,
+    classify_submitted_entry_provenance,
     extract_submitted_entries,
     review_contest_results,
 )
+from dfs_optimizer.services.run_history import list_run_records, restore_run
+from dfs_optimizer.services.submissions import load_submission_snapshot
 from dfs_optimizer.services.calibration import (
     calibration_record,
     calibration_record_bytes,
@@ -88,29 +94,108 @@ if results_file is not None:
                 slate.contest_format,
                 entry_filter,
             )
+            current_run_id = st.session_state.get("current_run_id")
+            portfolios = [SavedPortfolio(
+                run_id=current_run_id or "current-session",
+                label="Current session run",
+                lineups=tuple(lineups),
+                is_current=True,
+            )]
+            saved_runs = list_run_records()
+            current_record = next(
+                (record for record in saved_runs if record.run_id == current_run_id),
+                None,
+            )
+            if current_record is not None:
+                for record_item in saved_runs:
+                    if (
+                        record_item.run_id == current_record.run_id
+                        or record_item.slate_id != current_record.slate_id
+                    ):
+                        continue
+                    try:
+                        _, _, saved_lineups, _, _ = restore_run(record_item)
+                    except (KeyError, OSError, ValueError):
+                        continue
+                    portfolios.append(SavedPortfolio(
+                        run_id=record_item.run_id,
+                        label=record_item.label,
+                        lineups=saved_lineups,
+                    ))
+            captured_submissions = []
+            snapshot_path_value = st.session_state.get("saved_submission_path")
+            snapshot_path = (
+                Path(snapshot_path_value)
+                if snapshot_path_value
+                else Path("data/submissions") / f"{current_run_id}.json"
+                if current_run_id else None
+            )
+            if snapshot_path is not None and snapshot_path.is_file():
+                try:
+                    snapshot = load_submission_snapshot(snapshot_path)
+                except ValueError:
+                    pass
+                else:
+                    if (
+                        snapshot.run_id == current_run_id
+                        and snapshot.platform == slate.platform
+                        and snapshot.contest_format == slate.contest_format
+                    ):
+                        captured_submissions.append(CapturedSubmission(
+                            run_id=snapshot.run_id,
+                            label="Captured final submission",
+                            rosters=snapshot.rosters,
+                        ))
+            provenance = classify_submitted_entry_provenance(
+                submitted,
+                tuple(portfolios),
+                slate.platform,
+                slate.contest_format,
+                tuple(captured_submissions),
+            )
             st.subheader("Actual submitted entries")
             if submitted:
                 st.dataframe(
                     pd.DataFrame([
                         {
-                            "Rank": item.rank,
-                            "Score": item.score,
-                            "Top %": round(100 * item.rank / review.field_size, 2),
-                            "Duplicates": item.duplication,
+                            "Source": item.source,
+                            "Run": item.run_label or "Not matched to a saved run",
+                            "Rank": item.entry.rank,
+                            "Score": item.entry.score,
+                            "Top %": round(100 * item.entry.rank / review.field_size, 2),
+                            "Duplicates": item.entry.duplication,
                             "Lineup": ", ".join(
                                 f"{role} {name}".strip()
-                                for role, name in item.lineup
+                                for role, name in item.entry.lineup
                             ),
                         }
-                        for item in submitted
+                        for item in provenance
                     ]),
                     hide_index=True,
                     width="stretch",
                 )
-                if len(submitted) != len(lineups) or len(review.lineups) != len(submitted):
+                unverified_count = sum(not item.verified for item in provenance)
+                earlier_count = sum(item.source == "Earlier saved run" for item in provenance)
+                captured_count = sum(
+                    item.source == "Captured submission change" for item in provenance
+                )
+                if unverified_count:
+                    st.warning(
+                        f"{unverified_count} submitted entr{'y was' if unverified_count == 1 else 'ies were'} "
+                        "not found in a saved app run. They are shown for context but excluded "
+                        "from this run's performance record.",
+                        icon=":material/fact_check:",
+                    )
+                if earlier_count:
                     st.info(
-                        "Your final submitted entries differ from this saved run. "
-                        "The table above is authoritative for post-contest review."
+                        f"{earlier_count} submitted entr{'y matches' if earlier_count == 1 else 'ies match'} "
+                        "an earlier saved run and are labeled separately from the current portfolio."
+                    )
+                if captured_count:
+                    st.info(
+                        f"{captured_count} submitted entr{'y matches' if captured_count == 1 else 'ies match'} "
+                        "the saved final-submission record but not the generated portfolio. "
+                        "They are documented manual changes and are excluded from optimizer validation."
                     )
             else:
                 st.warning("No scored entries matched that username.")
@@ -263,6 +348,9 @@ if results_file is not None:
                 )
             result_hash = hashlib.sha256(results_file.getvalue()).hexdigest()
             run_id = st.session_state.get("current_run_id") or f"results-{result_hash[:12]}"
+            verified_current_entries = tuple(
+                item.entry for item in provenance if item.current_run
+            ) if entry_filter.strip() else ()
             record = calibration_record(
                 run_id,
                 slate,
@@ -270,7 +358,7 @@ if results_file is not None:
                 evaluation_rows,
                 review.field_size,
                 review.winning_score,
-                submitted,
+                verified_current_entries,
             )
             record_key = (run_id, result_hash, entry_filter.strip().casefold())
             if st.session_state.get("calibration_record_key") != record_key:

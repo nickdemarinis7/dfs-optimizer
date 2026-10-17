@@ -100,9 +100,22 @@ def suggest_default_excluded_player_ids(
             and projection.floor <= .5
             and projection.p25 is not None
             and projection.p25 <= .5
-            and (projection.bust_probability or 0) >= .70
-            and (context := context_by_id.get(player.platform_id)) is not None
-            and (context.depth_chart_position or 0) >= 3
+            and (
+                (
+                    (projection.bust_probability or 0) >= .70
+                    and (context := context_by_id.get(player.platform_id)) is not None
+                    and (context.depth_chart_position or 0) >= 3
+                )
+                or (
+                    # A sub-1.5 median with no meaningful lower-quartile
+                    # outcome is a no-role profile even when the external
+                    # depth chart does not match the player. This catches
+                    # practice-squad and deep-reserve darts without removing
+                    # demonstrated salary-relief options.
+                    projection.projected_points < 1.5
+                    and (projection.bust_probability or 0) >= .50
+                )
+            )
         )
 
     return frozenset(unavailable | backups | extreme_showdown_punts)

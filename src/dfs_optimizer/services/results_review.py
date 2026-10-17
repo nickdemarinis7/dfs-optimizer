@@ -40,6 +40,38 @@ class SubmittedEntry:
     lineup: tuple[tuple[str, str], ...]
 
 
+@dataclass(frozen=True, slots=True)
+class SavedPortfolio:
+    run_id: str
+    label: str
+    lineups: tuple
+    is_current: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class CapturedSubmission:
+    run_id: str
+    label: str
+    rosters: tuple
+
+
+@dataclass(frozen=True, slots=True)
+class ProvenancedEntry:
+    entry: SubmittedEntry
+    source: str
+    run_id: str | None
+    run_label: str | None
+    lineup_number: int | None
+
+    @property
+    def verified(self) -> bool:
+        return self.run_id is not None
+
+    @property
+    def current_run(self) -> bool:
+        return self.source == "Current run"
+
+
 def review_contest_results(
     content: bytes,
     filename: str,
@@ -150,6 +182,91 @@ def extract_submitted_entries(
             lineup=_display_lineup(row["Lineup"], platform, contest_format),
         ))
     return tuple(sorted(submitted, key=lambda item: item.rank))
+
+
+def classify_submitted_entry_provenance(
+    entries: tuple[SubmittedEntry, ...],
+    portfolios: tuple[SavedPortfolio, ...],
+    platform: Platform,
+    contest_format: ContestFormat,
+    captured_submissions: tuple[CapturedSubmission, ...] = (),
+) -> tuple[ProvenancedEntry, ...]:
+    """Match submitted entries only to exact lineups from saved app runs.
+
+    Portfolios are evaluated in the supplied order, so callers should put the
+    current run first. A lineup present in both the current and an older run is
+    attributed to the current run rather than double-counted.
+    """
+    saved: dict[object, tuple[SavedPortfolio, int]] = {}
+    for portfolio in portfolios:
+        for number, lineup in enumerate(portfolio.lineups, 1):
+            key = _generated_lineup_key(lineup, platform, contest_format)
+            saved.setdefault(key, (portfolio, number))
+
+    captured: dict[object, tuple[CapturedSubmission, int]] = {}
+    for submission in captured_submissions:
+        for roster in submission.rosters:
+            key = _captured_roster_key(roster, contest_format)
+            captured.setdefault(key, (submission, roster.lineup_number))
+
+    classified = []
+    for entry in entries:
+        entry_key = _submitted_entry_key(entry, contest_format)
+        match = saved.get(entry_key)
+        if match is not None:
+            portfolio, lineup_number = match
+            classified.append(ProvenancedEntry(
+                entry=entry,
+                source="Current run" if portfolio.is_current else "Earlier saved run",
+                run_id=portfolio.run_id,
+                run_label=portfolio.label,
+                lineup_number=lineup_number,
+            ))
+            continue
+        captured_match = captured.get(entry_key)
+        if captured_match is not None:
+            submission, lineup_number = captured_match
+            classified.append(ProvenancedEntry(
+                entry=entry,
+                source="Captured submission change",
+                run_id=submission.run_id,
+                run_label=submission.label,
+                lineup_number=lineup_number,
+            ))
+            continue
+        if match is None:
+            classified.append(ProvenancedEntry(
+                entry=entry,
+                source="Unverified",
+                run_id=None,
+                run_label=None,
+                lineup_number=None,
+            ))
+            continue
+    return tuple(classified)
+
+
+def _submitted_entry_key(entry: SubmittedEntry, contest_format: ContestFormat):
+    if contest_format == ContestFormat.SINGLE_GAME:
+        return entry.lineup
+    return tuple(sorted(name for _, name in entry.lineup))
+
+
+def _captured_roster_key(roster, contest_format: ContestFormat):
+    if contest_format == ContestFormat.SINGLE_GAME:
+        multiplier = next(
+            (name for slot, _, name in roster.players if slot in {"CPT", "MVP"}),
+            "",
+        )
+        flex = sorted(
+            name for slot, _, name in roster.players if slot not in {"CPT", "MVP"}
+        )
+        role = next(
+            (slot for slot, _, _ in roster.players if slot in {"CPT", "MVP"}),
+            "MVP",
+        )
+        return ((role, multiplier), *(("FLEX", name) for name in flex))
+    return tuple(sorted(name for _, _, name in roster.players))
 
 
 def _read_rows(content: bytes, filename: str) -> list[dict[str, str]]:

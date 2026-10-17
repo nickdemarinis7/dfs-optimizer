@@ -107,6 +107,46 @@ class CurrentRoleAdjustmentTests(unittest.TestCase):
         self.assertEqual(adjusted, projections)
         self.assertEqual(audit, ())
 
+    def test_does_not_penalize_wr3_from_depth_order_alone(self) -> None:
+        players = (
+            Player("wr1", "Outside One", Position.WR, (Position.WR,), 9000, "SEA", "DEN", "SEA@DEN"),
+            Player("wr3", "Slot Starter", Position.WR, (Position.WR,), 5000, "SEA", "DEN", "SEA@DEN"),
+        )
+        slate = Slate(Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, players, "test")
+        projections = (
+            Projection("Outside One", "SEA", 15, platform_id="wr1"),
+            Projection("Slot Starter", "SEA", 8, platform_id="wr3", floor=3, ceiling=15),
+        )
+        contexts = (
+            PlayerContext("wr1", 1, None, None, True),
+            PlayerContext("wr3", 3, None, None, True),
+        )
+
+        adjusted, audit = apply_current_role_adjustments(slate, projections, contexts)
+
+        self.assertEqual(adjusted, projections)
+        self.assertEqual(audit, ())
+
+    def test_penalizes_wr4_behind_active_receivers(self) -> None:
+        players = (
+            Player("wr1", "Starter", Position.WR, (Position.WR,), 9000, "SEA", "DEN", "SEA@DEN"),
+            Player("wr4", "Reserve", Position.WR, (Position.WR,), 2000, "SEA", "DEN", "SEA@DEN"),
+        )
+        slate = Slate(Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, players, "test")
+        projections = (
+            Projection("Starter", "SEA", 15, platform_id="wr1"),
+            Projection("Reserve", "SEA", 4, platform_id="wr4", floor=0, ceiling=10),
+        )
+        contexts = (
+            PlayerContext("wr1", 1, None, None, True),
+            PlayerContext("wr4", 4, None, None, True),
+        )
+
+        adjusted, audit = apply_current_role_adjustments(slate, projections, contexts)
+
+        self.assertEqual(adjusted[1].projected_points, 3)
+        self.assertEqual(audit[0].depth_order, 4)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -30,8 +30,9 @@ def apply_current_role_adjustments(
     Historical usage remains the primary projection. This layer handles the
     pre-lock facts that a temporary starter may now sit behind a healthy player
     and that a replacement quarterback's relief appearances may understate a
-    confirmed start. Skill-player penalties intentionally target only TE2+ and
-    RB3/WR3+ roles.
+    confirmed start. Skill-player penalties intentionally target only TE2+,
+    RB3+, and WR4+ roles. An NFL WR3 is frequently a starting slot receiver,
+    so depth order alone is not enough evidence to reduce that projection.
     """
     if slate.sport != Sport.NFL or not contexts:
         return projections, ()
@@ -94,7 +95,10 @@ def apply_current_role_adjustments(
                 "TE2 or deeper behind an active TE1",
                 depth,
             )
-        elif player.primary_position in {Position.RB, Position.WR} and depth >= 3:
+        elif (
+            player.primary_position == Position.RB and depth >= 3
+            or player.primary_position == Position.WR and depth >= 4
+        ):
             factors[player.platform_id] = (
                 .75,
                 f"{player.primary_position.value}{depth} behind an active starter",

@@ -29,6 +29,10 @@ from dfs_optimizer.optimization import (
     generate_single_game_lineups,
 )
 from dfs_optimizer.services.projections import apply_uploaded_ownership
+from dfs_optimizer.services.ownership import (
+    NFL_SHOWDOWN_OWNERSHIP_MODEL_VERSION,
+    estimate_nfl_showdown_ownership,
+)
 from dfs_optimizer.services.role_adjustments import apply_current_role_adjustments
 from dfs_optimizer.services.player_context import (
     fetch_player_context,
@@ -68,6 +72,7 @@ st.session_state["base_projections"] = base_projections
 projections, role_adjustments = apply_current_role_adjustments(
     slate, base_projections, player_context
 )
+projections = estimate_nfl_showdown_ownership(slate, projections)
 st.session_state["projections"] = projections
 st.session_state["role_adjustments"] = role_adjustments
 projection_by_id = {item.platform_id: item for item in projections}
@@ -424,6 +429,7 @@ if customize_strategy:
                     projections, role_adjustments = apply_current_role_adjustments(
                         slate, base_projections, player_context
                     )
+                    projections = estimate_nfl_showdown_ownership(slate, projections)
                     st.session_state["base_projections"] = base_projections
                     st.session_state["projections"] = projections
                     st.session_state["role_adjustments"] = role_adjustments
@@ -556,6 +562,18 @@ ownership_coverage = (
     sum(item.projected_ownership is not None for item in projections) / len(projections)
     if projections else 0
 )
+ownership_source = (
+    "uploaded"
+    if ownership_coverage and st.session_state.get("ownership_hash")
+    else "slate-relative estimate"
+    if ownership_coverage and (
+        slate.sport == Sport.CFB
+        or slate.contest_format == ContestFormat.SINGLE_GAME
+    )
+    else "model-provided"
+    if ownership_coverage
+    else None
+)
 
 strategy_parts = [
     f"{minimum_unique}-player uniqueness",
@@ -572,6 +590,11 @@ if limited_ids:
 if ownership_coverage >= .75:
     strategy_parts.append("ownership leverage")
 summary_strip("Strategy ready", " · ".join(strategy_parts))
+if ownership_source == "slate-relative estimate":
+    st.caption(
+        "Ownership leverage uses a conservative slate-relative estimate—not "
+        "reported contest ownership. Upload a trusted ownership CSV to replace it."
+    )
 
 action_guide(
     2,
@@ -643,8 +666,15 @@ if generate_clicked:
         effective_player_exposure = maximum_player_exposure
         effective_minimum_unique = minimum_unique
         effective_ownership_penalty = (
-            .025 if slate.sport == Sport.CFB and ownership_coverage >= .75
-            else .05 if ownership_coverage >= .75 else 0
+            .05 if ownership_source == "uploaded" and ownership_coverage >= .75
+            else .025 if slate.sport == Sport.CFB and ownership_coverage >= .75
+            else .01 if (
+                slate.sport == Sport.NFL
+                and slate.contest_format == ContestFormat.SINGLE_GAME
+                and ownership_source == "slate-relative estimate"
+                and ownership_coverage >= .75
+            )
+            else 0
         )
         matches = match_projections(slate, projections)
         with st.status("Optimizing portfolio…", expanded=True) as status:
@@ -867,10 +897,17 @@ if generate_clicked:
             )),
             "ceiling_lineup_number": lineup_count if include_ceiling_lineup else None,
             "ownership_coverage": ownership_coverage,
+            "ownership_source": ownership_source,
+            "ownership_model_version": (
+                NFL_SHOWDOWN_OWNERSHIP_MODEL_VERSION
+                if ownership_source == "slate-relative estimate"
+                and slate.sport == Sport.NFL
+                else None
+            ),
             "ownership_penalty": effective_ownership_penalty,
             "maximum_fragile_players_per_lineup": (
                 2 if slate.contest_format == ContestFormat.CLASSIC
-                else None
+                else 1
             ),
             "lineup_risk_profiles": (
                 ("balanced", "upside", "ceiling")

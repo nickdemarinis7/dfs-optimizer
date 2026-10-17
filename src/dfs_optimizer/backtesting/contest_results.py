@@ -121,11 +121,25 @@ def import_player_results_content(
     selected = []
     for rows in candidates.values():
         # DraftKings Showdown publishes both CPT and FLEX summaries. FLEX is the
-        # unmultiplied player outcome required for projection evaluation.
-        selected.append(next(
+        # unmultiplied player outcome required for projection evaluation. The
+        # ownership model estimates selection in any roster slot, so combine
+        # CPT and FLEX ownership when both summaries are present.
+        result = next(
             (result for role, result in rows if role == "FLEX"),
             rows[0][1],
-        ))
+        )
+        role_ownership = {
+            role: item.drafted_percent for role, item in rows
+            if role in {"CPT", "FLEX"}
+        }
+        if len(role_ownership) > 1:
+            result = PlayerResult(
+                name=result.name,
+                position=result.position,
+                drafted_percent=sum(role_ownership.values()),
+                fantasy_points=result.fantasy_points,
+            )
+        selected.append(result)
     if not selected:
         raise ValueError("contest results contain no player outcomes")
     return tuple(selected)

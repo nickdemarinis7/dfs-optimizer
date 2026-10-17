@@ -74,6 +74,7 @@ class ProjectionMetricTests(unittest.TestCase):
         self.assertEqual(results[0].name, "Test Player")
         self.assertEqual(results[0].position, "WR")
         self.assertEqual(results[0].fantasy_points, 12)
+        self.assertEqual(results[0].drafted_percent, 50)
 
 
 if __name__ == "__main__":

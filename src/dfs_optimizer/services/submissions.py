@@ -29,6 +29,14 @@ class SubmissionComparison:
     changed_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class SubmissionSnapshot:
+    run_id: str
+    platform: Platform
+    contest_format: ContestFormat
+    rosters: tuple[SubmittedRoster, ...]
+
+
 def import_submitted_rosters(content: bytes, slate) -> tuple[SubmittedRoster, ...]:
     rows = list(csv.reader(io.StringIO(content.decode("utf-8-sig"))))
     if len(rows) < 2:
@@ -139,6 +147,29 @@ def save_submission_snapshot(
     temporary.write_bytes(content)
     temporary.replace(destination)
     return destination
+
+
+def load_submission_snapshot(path: str | Path) -> SubmissionSnapshot:
+    try:
+        payload = json.loads(Path(path).read_text())
+        rosters = tuple(
+            SubmittedRoster(
+                lineup_number=int(item["lineup_number"]),
+                players=tuple(
+                    (player["slot"], player["platform_id"], player["name"])
+                    for player in item["players"]
+                ),
+            )
+            for item in payload["submitted_rosters"]
+        )
+        return SubmissionSnapshot(
+            run_id=payload["run_id"],
+            platform=Platform(payload["platform"]),
+            contest_format=ContestFormat(payload["contest_format"]),
+            rosters=rosters,
+        )
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("submission snapshot could not be read") from exc
 
 
 def _find_roster_start(header, expected):

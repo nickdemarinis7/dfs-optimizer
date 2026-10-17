@@ -10,6 +10,7 @@ from dfs_optimizer.optimization import generate_classic_lineups
 from dfs_optimizer.services.submissions import (
     compare_submitted_rosters,
     import_submitted_rosters,
+    load_submission_snapshot,
     save_submission_snapshot,
     submission_snapshot_bytes,
 )
@@ -44,6 +45,18 @@ class SubmissionSnapshotTests(unittest.TestCase):
             destination = save_submission_snapshot(content, "run-1", folder)
             self.assertEqual(destination, Path(folder) / "run-1.json")
             self.assertEqual(destination.read_bytes(), content)
+            restored = load_submission_snapshot(destination)
+
+        self.assertEqual(restored.run_id, "run-1")
+        self.assertEqual(restored.platform, slate.platform)
+        self.assertEqual(restored.rosters, rosters)
+
+    def test_rejects_invalid_submission_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "broken.json"
+            path.write_text('{"run_id": "missing-rosters"}')
+            with self.assertRaisesRegex(ValueError, "could not be read"):
+                load_submission_snapshot(path)
 
 
 if __name__ == "__main__":

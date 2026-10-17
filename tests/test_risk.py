@@ -56,6 +56,42 @@ class PortfolioRiskTests(unittest.TestCase):
 
         self.assertNotIn(player.platform_id, suggestions)
 
+    def test_excludes_near_zero_role_punt_without_depth_chart_match(self) -> None:
+        player = Player(
+            "unknown-punt", "Unmatched Reserve", Position.WR,
+            (Position.WR, Position.FLEX), 200, "DEN", "SEA", "SEA@DEN",
+        )
+        slate = Slate(
+            Platform.FANDUEL, ContestFormat.SINGLE_GAME, (player,), "test"
+        )
+        projection = Projection(
+            player.name, player.team, 0.4, platform_id=player.platform_id,
+            floor=0.02, ceiling=2.4, p10=0, p25=0.03, p75=1.2, p90=2.4,
+            bust_probability=.50,
+        )
+
+        suggestions = suggest_default_excluded_player_ids(slate, (projection,))
+
+        self.assertIn(player.platform_id, suggestions)
+
+    def test_keeps_low_cost_punt_with_a_usable_median(self) -> None:
+        player = Player(
+            "dart", "Usable Dart", Position.WR,
+            (Position.WR, Position.FLEX), 1000, "DEN", "SEA", "SEA@DEN",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, (player,), "test"
+        )
+        projection = Projection(
+            player.name, player.team, 2.5, platform_id=player.platform_id,
+            floor=0, ceiling=9, p10=0, p25=0, p75=5, p90=9,
+            bust_probability=.60,
+        )
+
+        suggestions = suggest_default_excluded_player_ids(slate, (projection,))
+
+        self.assertNotIn(player.platform_id, suggestions)
+
     def test_nfl_high_bust_skill_player_is_suggested_max_once(self) -> None:
         player = Player(
             "fragile", "Fragile Tight End", Position.TE,

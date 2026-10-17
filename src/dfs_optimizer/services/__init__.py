@@ -8,6 +8,10 @@ from .projections import (
     historical_data_paths,
 )
 from .risk import suggest_default_excluded_player_ids, suggest_max_once_player_ids
+from .ownership import (
+    NFL_SHOWDOWN_OWNERSHIP_MODEL_VERSION,
+    estimate_nfl_showdown_ownership,
+)
 from .role_adjustments import RoleAdjustment, apply_current_role_adjustments
 from .player_context import (
     PlayerContext,
@@ -17,9 +21,13 @@ from .player_context import (
     summarize_prelock_context,
 )
 from .results_review import (
+    CapturedSubmission,
+    ProvenancedEntry,
     ResultsReview,
     ReviewedLineup,
+    SavedPortfolio,
     SubmittedEntry,
+    classify_submitted_entry_provenance,
     extract_submitted_entries,
     review_contest_results,
 )
@@ -56,6 +64,8 @@ __all__ = [
     "build_cfb_projections",
     "build_cfb_projections_from_file",
     "estimate_cfb_ownership",
+    "estimate_nfl_showdown_ownership",
+    "NFL_SHOWDOWN_OWNERSHIP_MODEL_VERSION",
     "infer_cfb_season",
     "infer_cfb_week",
     "infer_cfb_team_names_from_file",
@@ -69,8 +79,12 @@ __all__ = [
     "match_player_context",
     "summarize_prelock_context",
     "ResultsReview",
+    "CapturedSubmission",
     "ReviewedLineup",
+    "SavedPortfolio",
     "SubmittedEntry",
+    "ProvenancedEntry",
+    "classify_submitted_entry_provenance",
     "extract_submitted_entries",
     "review_contest_results",
     "build_run_archive",
