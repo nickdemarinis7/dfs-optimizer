@@ -22,8 +22,19 @@ class CFBConsensusLine:
 
 def fetch_cfb_consensus_lines(api_key: str) -> tuple[CFBConsensusLine, ...]:
     """Fetch current US-book consensus NCAAF spreads and totals."""
-    if not api_key.strip():
+    api_key = api_key.strip()
+    if not api_key:
         raise ValueError("The Odds API key cannot be empty")
+    normalized_key = api_key.casefold().replace("_", "-").replace(" ", "-")
+    if (
+        normalized_key in {"your-key", "your-existing-key", "api-key"}
+        or "placeholder" in normalized_key
+        or normalized_key.startswith(("replace-", "insert-", "enter-"))
+    ):
+        raise ValueError(
+            "THE_ODDS_API_KEY is still set to placeholder text; replace it with "
+            "the real key in Streamlit secrets"
+        )
     try:
         response = requests.get(
             CFB_ODDS_URL,

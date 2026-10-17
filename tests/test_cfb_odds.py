@@ -1,11 +1,22 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
-from dfs_optimizer.data_sources.cfb_odds import parse_cfb_consensus_lines
+from dfs_optimizer.data_sources.cfb_odds import (
+    fetch_cfb_consensus_lines,
+    parse_cfb_consensus_lines,
+)
 
 
 class CFBOddsTests(unittest.TestCase):
+    @patch("dfs_optimizer.data_sources.cfb_odds.requests.get")
+    def test_rejects_placeholder_key_before_request(self, get) -> None:
+        with self.assertRaisesRegex(ValueError, "placeholder text"):
+            fetch_cfb_consensus_lines("your-existing-key")
+
+        get.assert_not_called()
+
     def test_builds_median_consensus_from_bookmakers(self) -> None:
         payload = [{
             "home_team": "Alpha Tigers",

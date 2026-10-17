@@ -60,12 +60,29 @@ def infer_cfb_season(slate: Slate) -> int | None:
 
 
 def infer_cfb_week(slate: Slate) -> int | None:
-    """Infer the conventional CFB week from the earliest slate kickoff date."""
+    """Infer the conventional CFB week from slate games or the salary filename."""
     kickoff_dates = []
-    for value in slate.games:
-        if match := re.search(r"\b(\d{1,2})/(\d{1,2})/(20\d{2})\b", value):
+    for value in (*slate.games, slate.source_name):
+        matches = list(re.finditer(
+            r"\b(?:(?P<month>\d{1,2})/(?P<day>\d{1,2})/(?P<year>20\d{2})"
+            r"|(?P<iso_year>20\d{2})\D+(?P<iso_month>\d{1,2})\D+"
+            r"(?P<iso_day>\d{1,2}))\b",
+            value,
+        ))
+        for match in matches:
             try:
-                kickoff_dates.append(datetime.strptime(match.group(0), "%m/%d/%Y").date())
+                if match.group("year"):
+                    kickoff_dates.append(date(
+                        int(match.group("year")),
+                        int(match.group("month")),
+                        int(match.group("day")),
+                    ))
+                else:
+                    kickoff_dates.append(date(
+                        int(match.group("iso_year")),
+                        int(match.group("iso_month")),
+                        int(match.group("iso_day")),
+                    ))
             except ValueError:
                 continue
     if not kickoff_dates:

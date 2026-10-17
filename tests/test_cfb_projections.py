@@ -71,6 +71,17 @@ class CFBProjectionTests(unittest.TestCase):
         # cfbfastR labels the October 10, 2026 slate as Week 6.
         self.assertEqual(infer_cfb_week(self.slate), 6)
 
+    def test_infers_week_from_fanduel_salary_filename(self) -> None:
+        fanduel_slate = Slate(
+            Platform.FANDUEL,
+            ContestFormat.CLASSIC,
+            tuple(replace(player, game="AAA@BBB") for player in self.slate.players),
+            "FanDuel-CFB-2026 EDT-10 EDT-17 EDT-135105-players-list.csv",
+            Sport.CFB,
+        )
+
+        self.assertEqual(infer_cfb_week(fanduel_slate), 7)
+
     def test_excludes_target_week_and_later_results(self) -> None:
         headers = (
             "game_id,season,week,team,opponent,completion_player,completion_yds,"
