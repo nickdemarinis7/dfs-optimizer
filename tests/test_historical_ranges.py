@@ -77,6 +77,48 @@ class HistoricalRangeTests(unittest.TestCase):
 
             self.assertLess(result.ceiling, 8)
 
+    def test_preserves_recent_opportunity_decline_as_projection_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            players = root / "players.csv"
+            teams = root / "teams.csv"
+            games = root / "games.csv"
+            snaps = root / "snaps.csv"
+            players.write_text(
+                "season,week,season_type,player_display_name,position,targets,receptions,receiving_yards\n"
+                "2026,1,REG,Declining TE,TE,8,5,50\n"
+                "2026,2,REG,Declining TE,TE,7,4,40\n"
+                "2026,3,REG,Declining TE,TE,1,1,4\n"
+                "2026,4,REG,Declining TE,TE,1,0,0\n",
+                encoding="utf-8",
+            )
+            teams.write_text("season,week,season_type,game_id,team\n", encoding="utf-8")
+            games.write_text("game_id,home_team,away_team,home_score,away_score\n", encoding="utf-8")
+            snaps.write_text(
+                "season,week,game_type,player,team,offense_pct\n"
+                "2026,1,REG,Declining TE,AAA,.80\n"
+                "2026,2,REG,Declining TE,AAA,.75\n"
+                "2026,3,REG,Declining TE,AAA,.20\n"
+                "2026,4,REG,Declining TE,AAA,.15\n",
+                encoding="utf-8",
+            )
+            player = Player(
+                "te", "Declining TE", Position.TE, (Position.TE, Position.FLEX),
+                3500, "AAA", "BBB", "AAA@BBB",
+            )
+            slate = Slate(
+                Platform.DRAFTKINGS, ContestFormat.CLASSIC, (player,), "test.csv"
+            )
+
+            result = add_historical_ranges(
+                slate, (Projection(player.name, player.team, 4, platform_id="te"),),
+                (players,), (teams,), games, 2026, 5, snap_files=(snaps,),
+            )[0]
+
+            self.assertEqual(result.sample_size, 4)
+            self.assertLess(result.opportunity_stability, .30)
+            self.assertEqual(result.data_age_periods, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

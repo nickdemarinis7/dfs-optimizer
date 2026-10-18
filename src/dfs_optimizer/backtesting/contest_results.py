@@ -128,11 +128,13 @@ def import_player_results_content(
             (result for role, result in rows if role == "FLEX"),
             rows[0][1],
         )
+        # Exports publish one ownership row per eligible roster slot. Since a
+        # player can occupy only one slot in an entry, total player ownership
+        # is the sum across those roles (including RB/FLEX/S-FLEX in CFB).
         role_ownership = {
-            role: item.drafted_percent for role, item in rows
-            if role in {"CPT", "FLEX"}
+            role: item.drafted_percent for role, item in rows if role
         }
-        if len(role_ownership) > 1:
+        if role_ownership:
             result = PlayerResult(
                 name=result.name,
                 position=result.position,

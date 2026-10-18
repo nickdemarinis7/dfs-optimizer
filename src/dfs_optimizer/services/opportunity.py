@@ -1,0 +1,175 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+
+from dfs_optimizer.models import Position, Projection, Slate
+
+from .player_context import PlayerContext, verified_player_context_ids
+
+
+@dataclass(frozen=True, slots=True)
+class OpportunityAssessment:
+    platform_id: str
+    player: str
+    score: float | None
+    tier: str
+    reasons: tuple[str, ...]
+    range_factor: float
+
+
+def apply_opportunity_risk(
+    slate: Slate,
+    projections: tuple[Projection, ...],
+    contexts: tuple[PlayerContext, ...] = (),
+) -> tuple[tuple[Projection, ...], tuple[OpportunityAssessment, ...]]:
+    """Grade current opportunity and conservatively widen weak-role outcomes.
+
+    Median points remain untouched here: recent usage and depth-chart changes
+    already affect the core forecast. This layer prevents an uncertain role
+    from retaining an unrealistically safe floor or bust probability.
+    """
+    players = {player.platform_id: player for player in slate.players}
+    context_by_id = {item.platform_id: item for item in contexts}
+    verified_ids = verified_player_context_ids(contexts)
+    unavailable = {"IR", "O", "OUT", "INACTIVE", "INJURED RESERVE"}
+    healthy_leaders = {
+        (player.team, player.primary_position)
+        for player in slate.players
+        if (context := context_by_id.get(player.platform_id)) is not None
+        and context.depth_chart_position == 1
+        and context.active is not False
+        and (
+            context.injury_status or player.status or ""
+        ).strip().upper() not in unavailable
+    }
+    output = []
+    assessments = []
+    for projection in projections:
+        player_id = projection.platform_id or ""
+        player = players.get(player_id)
+        if player is None or player.primary_position in {Position.DST, Position.K}:
+            output.append(projection)
+            continue
+        context = context_by_id.get(player_id)
+        evidence = (
+            projection.opportunity_stability is not None
+            or projection.bust_probability is not None
+            or projection.floor is not None
+            or player_id in verified_ids
+        )
+        if not evidence:
+            output.append(projection)
+            assessments.append(OpportunityAssessment(
+                player_id, player.name, None, "Unrated",
+                ("insufficient current-opportunity evidence",), 1.0,
+            ))
+            continue
+
+        score = 65.0
+        reasons = []
+        stability = projection.opportunity_stability
+        if stability is not None:
+            if stability < .25:
+                score -= 35
+                reasons.append("sharp recent usage or snap-share decline")
+            elif stability < .50:
+                score -= 22
+                reasons.append("meaningful recent opportunity decline")
+            elif stability < .70:
+                score -= 10
+                reasons.append("uneven recent opportunity")
+            elif stability >= .85:
+                score += 10
+                reasons.append("recent opportunity has held")
+
+        status = (
+            (context.injury_status if context and context.injury_status else None)
+            or player.status or ""
+        ).strip().upper()
+        depth = context.depth_chart_position if context else None
+        if status in unavailable or (context is not None and context.active is False):
+            score = 0
+            reasons.append("currently unavailable")
+        elif status in {"D", "DOUBTFUL", "Q", "QUESTIONABLE"}:
+            score -= 12
+            reasons.append(f"{status.lower()} availability")
+        if depth is not None:
+            leader_confirmed = (player.team, player.primary_position) in healthy_leaders
+            if player.primary_position == Position.TE and depth >= 2 and leader_confirmed:
+                score -= 22
+                reasons.append(f"TE{depth} on current depth chart")
+            elif player.primary_position == Position.RB and depth >= 3 and leader_confirmed:
+                score -= 25
+                reasons.append(f"RB{depth} on current depth chart")
+            elif player.primary_position == Position.WR and depth >= 4 and leader_confirmed:
+                score -= 25
+                reasons.append(f"WR{depth} on current depth chart")
+            elif player.primary_position == Position.QB and depth >= 2 and leader_confirmed:
+                score -= 35
+                reasons.append(f"QB{depth} on current depth chart")
+            elif depth == 1:
+                score += 8
+                reasons.append("listed first on current depth chart")
+        if player_id in verified_ids:
+            score += 5
+            reasons.append("current role checked")
+
+        bust = projection.bust_probability
+        if bust is not None:
+            if bust >= .60:
+                score -= 18
+                reasons.append("high modeled bust probability")
+            elif bust >= .45:
+                score -= 10
+                reasons.append("elevated modeled bust probability")
+            elif bust <= .25:
+                score += 5
+                reasons.append("low modeled bust probability")
+        if projection.floor is not None and projection.projected_points > 0:
+            if projection.floor <= projection.projected_points * .15:
+                score -= 12
+                reasons.append("near-zero modeled floor")
+
+        score = round(min(100.0, max(0.0, score)), 1)
+        tier = "Strong" if score >= 75 else "Usable" if score >= 55 else "Watch" if score >= 40 else "Fragile"
+        factor = .50 if tier == "Fragile" else .75 if tier == "Watch" else 1.0
+
+        def lower(value, multiplier, *, at_least_median=False):
+            if value is None:
+                return None
+            adjusted = value * multiplier
+            return max(projection.projected_points, adjusted) if at_least_median else adjusted
+
+        adjusted_bust = bust
+        if tier == "Fragile":
+            adjusted_bust = max(bust or 0, .65)
+        elif tier == "Watch":
+            adjusted_bust = max(bust or 0, .45)
+        adjusted_p90 = lower(
+            projection.p90, .90 if tier == "Fragile" else 1.0,
+            at_least_median=True,
+        )
+        adjusted_p75 = lower(
+            projection.p75,
+            .95 if tier in {"Fragile", "Watch"} else 1.0,
+            at_least_median=True,
+        )
+        if adjusted_p75 is not None and adjusted_p90 is not None:
+            adjusted_p75 = min(adjusted_p75, adjusted_p90)
+        updated = replace(
+            projection,
+            floor=lower(projection.floor, factor),
+            p10=lower(projection.p10, factor),
+            p25=lower(projection.p25, .60 if tier == "Fragile" else factor),
+            p75=adjusted_p75,
+            p90=adjusted_p90,
+            ceiling=lower(projection.ceiling, .90 if tier == "Fragile" else 1.0, at_least_median=True),
+            bust_probability=adjusted_bust,
+        )
+        output.append(updated)
+        assessments.append(OpportunityAssessment(
+            player_id, player.name, score, tier,
+            tuple(dict.fromkeys(reasons)) or ("baseline opportunity evidence",),
+            factor,
+        ))
+    return tuple(output), tuple(assessments)

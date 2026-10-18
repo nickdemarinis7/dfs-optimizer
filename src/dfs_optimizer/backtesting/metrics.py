@@ -22,6 +22,8 @@ class ProjectionMetrics:
     ownership_mean_absolute_error: float | None = None
     ownership_mean_error: float | None = None
     ownership_correlation: float | None = None
+    zero_point_players: int = 0
+    zero_point_rate: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +38,9 @@ class ProjectionEvaluationRow:
     ceiling: float | None
     projected_ownership: float | None = None
     actual_ownership: float | None = None
+    bust_probability: float | None = None
+    confidence_score: float | None = None
+    confidence_tier: str | None = None
 
 
 def evaluate_projections(
@@ -88,6 +93,8 @@ def evaluate_projections(
             )
             if ownership_rows else None
         ),
+        zero_point_players=sum(row.actual == 0 for row in rows),
+        zero_point_rate=sum(row.actual == 0 for row in rows) / len(rows),
     )
 
 
@@ -115,6 +122,9 @@ def evaluate_projection_rows(
             ceiling=projection.ceiling,
             projected_ownership=projection.projected_ownership,
             actual_ownership=actual.drafted_percent,
+            bust_probability=projection.bust_probability,
+            confidence_score=projection.confidence_score,
+            confidence_tier=projection.confidence_tier,
         ))
     return tuple(rows)
 

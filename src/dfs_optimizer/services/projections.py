@@ -152,6 +152,7 @@ def build_historical_projections(
         paths.games_file,
         target_season,
         target_week,
+        snap_files=paths.snap_files,
     )
 
 

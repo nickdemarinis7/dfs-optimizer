@@ -1,0 +1,78 @@
+{
+  "slate_date": "2026-10-17",
+  "description": "Golden incident fixture derived from the submitted DraftKings and FanDuel CFB portfolios and official contest exports.",
+  "source_sha256": {
+    "fanduel_run": "d5fe7d02f458bbbd4fdb6f6486d35c07de4e4222b14471359d85d065fde81b36",
+    "draftkings_run": "54e2cd6b5d6f19b04ee1e9275fc19f99f87d8e25affdff2e1f05857b41cceff3",
+    "draftkings_results": "c75e03d6fd67dbfff4a287529c6d2f2f37578ae2480e4e61c90be2eade7813da",
+    "fanduel_results": "9f52ad2d3b4cafe44e5bf99a15985191b1017b8e4ad68571ce4d17b3520e9bcf"
+  },
+  "zero_point_failures": [
+    {
+      "platform": "fanduel",
+      "platform_id": "135413-172791",
+      "name": "Stephon Johnson",
+      "team": "HOU",
+      "position": "WR",
+      "salary": 5600,
+      "old_projection": 9.7,
+      "actual_points": 0,
+      "selected_lineups": 1,
+      "evidence": "no_current_season_events"
+    },
+    {
+      "platform": "draftkings",
+      "platform_id": "44508287",
+      "name": "Faizon Brandon",
+      "team": "TENN",
+      "position": "QB",
+      "salary": 5100,
+      "old_projection": 13.226,
+      "actual_points": 0,
+      "selected_lineups": 1,
+      "evidence": "missed_latest_team_game_while_teammate_qb_played"
+    },
+    {
+      "platform": "draftkings",
+      "platform_id": "44507567",
+      "name": "Brody Jones",
+      "team": "VT",
+      "position": "WR",
+      "salary": 3000,
+      "old_projection": 4.461,
+      "actual_points": 0,
+      "selected_lineups": 1,
+      "evidence": "no_current_season_events"
+    }
+  ],
+  "exposure_failures": [
+    {
+      "platform": "draftkings",
+      "platform_id": "44507506",
+      "name": "Jamal Roberts",
+      "team": "MIZZ",
+      "position": "RB",
+      "salary": 8500,
+      "old_projection": 39.953,
+      "old_bust_probability": 0.4444444444444444,
+      "actual_points": 8,
+      "selected_lineups": 2,
+      "portfolio_size": 3,
+      "expected_maximum_exposure": 0.5
+    },
+    {
+      "platform": "fanduel",
+      "platform_id": "135413-191700",
+      "name": "Jamal Roberts",
+      "team": "MIZZ",
+      "position": "RB",
+      "salary": 10500,
+      "old_projection": 41.684,
+      "old_bust_probability": 0.5555555555555556,
+      "actual_points": 8,
+      "selected_lineups": 2,
+      "portfolio_size": 3,
+      "expected_maximum_exposure": 0.34
+    }
+  ]
+}

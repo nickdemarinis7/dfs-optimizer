@@ -23,9 +23,10 @@ from dfs_optimizer.models import (
     Sport,
 )
 from dfs_optimizer.rules import cfb_scoring_for, classic_rules_for
+from .player_context import PlayerContext
 
 
-CFB_FORECAST_MODEL_VERSION = "cfb-recent-usage-v7"
+CFB_FORECAST_MODEL_VERSION = "cfb-recent-usage-v8"
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +208,7 @@ def build_cfb_projections_from_file(
         players_by_name[_normalize(player.name)].append(player)
 
     games: dict[tuple[str, str, str, str, int], _GameStats] = defaultdict(_GameStats)
+    team_weeks: dict[str, set[int]] = defaultdict(set)
     team_votes: dict[str, Counter[str]] = defaultdict(Counter)
     with Path(source).open(encoding="utf-8", newline="") as handle:
         for row in csv.DictReader(handle):
@@ -216,6 +218,8 @@ def build_cfb_projections_from_file(
             week = int(_number(row.get("week")))
             if week >= target_week:
                 continue
+            if team:
+                team_weeks[team].add(week)
             # FanDuel CFB counts regulation plus the first two overtime
             # periods. cfbfastR represents later overtimes as period 7+.
             period = int(_number(row.get("period")))
@@ -317,6 +321,55 @@ def build_cfb_projections_from_file(
     projections = []
     for player in available:
         observed = sorted(game_points.get(player.platform_id, ()), key=lambda item: item[0])
+        # Platform averages can survive from a prior season even when the
+        # player is no longer eligible or has no current role. Never turn a
+        # stale salary-file value into a playable CFB projection without at
+        # least one current-season touch, target, or pass event.
+        if not observed:
+            continue
+        observed_weeks = {week for week, _, _ in observed}
+
+        expected_team = team_names.get(player.team)
+        if expected_team:
+            observed_by_week = {
+                week: (points, opportunity)
+                for week, points, opportunity in observed
+            }
+            active_team_weeks = sorted(
+                week for week in team_weeks.get(expected_team, ())
+                if week >= observed[0][0]
+            )
+            observed = [
+                (
+                    week,
+                    observed_by_week.get(week, (0.0, 0.0))[0],
+                    observed_by_week.get(week, (0.0, 0.0))[1],
+                )
+                for week in active_team_weeks
+            ]
+
+        # If another slate QB recorded an event in the team's latest game,
+        # a QB with zero latest-game opportunity is a backup or injury-return
+        # risk. A manual projection can restore him after confirmed starter news.
+        if (
+            player.primary_position == Position.QB
+            and observed
+            and observed[-1][0] not in observed_weeks
+            and any(
+                teammate.platform_id != player.platform_id
+                and teammate.team == player.team
+                and teammate.primary_position == Position.QB
+                and any(
+                    week == observed[-1][0]
+                    for week, _, _ in game_points.get(
+                        teammate.platform_id, ()
+                    )
+                )
+                for teammate in available
+            )
+        ):
+            continue
+
         platform_average = max(0.0, player.platform_average or 0)
         if observed:
             recent = observed[-5:]
@@ -359,11 +412,6 @@ def build_cfb_projections_from_file(
                 p10 = min(p10, projected * .10)
                 p25 = min(p25, projected * .35)
                 bust = max(bust, .55 if recent_opportunity < 2 else .42)
-        else:
-            projected = platform_average
-            p10, p25 = projected * .4, projected * .7
-            p75, p90 = projected * 1.3, projected * 1.65
-            bust = .30
         projections.append(Projection(
             name=player.name,
             team=player.team,
@@ -376,8 +424,52 @@ def build_cfb_projections_from_file(
             p75=round(p75, 3),
             p90=round(p90, 3),
             bust_probability=min(1.0, max(0.0, bust)),
+            sample_size=len(observed),
+            opportunity_stability=(
+                max(0.0, 1 - min(
+                    1.0,
+                    statistics.pstdev(item[2] for item in observed)
+                    / statistics.fmean(item[2] for item in observed),
+                ))
+                if observed and statistics.fmean(item[2] for item in observed) > 0
+                else 0.0
+            ),
+            data_age_periods=max(0, target_week - 1 - observed[-1][0]),
         ))
     return estimate_cfb_ownership(slate, tuple(projections))
+
+
+def cfb_projection_input_snapshot(
+    slate: Slate, source: str | Path, target_week: int
+) -> bytes:
+    """Capture the play rows that can affect this slate's CFB projection build."""
+    relevant_names = {_normalize(player.name) for player in slate.players}
+    relevant_teams = set(infer_cfb_team_names_from_file(slate, source).values())
+    output = io.StringIO(newline="")
+    with Path(source).open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        if not reader.fieldnames:
+            raise ValueError("CFB history file has no header")
+        writer = csv.DictWriter(output, fieldnames=reader.fieldnames)
+        writer.writeheader()
+        for row in reader:
+            if int(_number(row.get("week"))) >= target_week:
+                continue
+            names = {
+                _normalize(row.get(column, ""))
+                for column in (
+                    "completion_player", "rush_player", "reception_player",
+                    "target_player", "interception_thrown_player",
+                )
+                if _valid_name(row.get(column))
+            }
+            # Projection construction also uses every team week to represent a
+            # zero-opportunity game for a known player. Preserve the whole team
+            # history, not only rows that name a player currently on the slate,
+            # so an archived replay sees the identical set of team games.
+            if row.get("team") in relevant_teams or names & relevant_names:
+                writer.writerow(row)
+    return output.getvalue().encode()
 
 
 def estimate_cfb_ownership(
@@ -449,6 +541,56 @@ def estimate_cfb_ownership(
         )
         for item in projections
     )
+
+
+def restore_verified_cfb_starters(
+    slate: Slate,
+    projections: tuple[Projection, ...],
+    contexts: tuple[PlayerContext, ...],
+) -> tuple[Projection, ...]:
+    """Restore a no-history player only after an explicit starter verification.
+
+    The context must mark the player active, first on the depth chart, and
+    provide a positive projection. This keeps stale salary-only players out
+    while allowing a newly promoted starter to be deliberately added.
+    """
+    if slate.sport != Sport.CFB:
+        return projections
+    existing = {item.platform_id for item in projections}
+    players = {item.platform_id: item for item in slate.players}
+    unavailable = {"IR", "O", "OUT", "INACTIVE", "UNAVAILABLE"}
+    restored = list(projections)
+    for context in contexts:
+        player = players.get(context.platform_id)
+        status = (context.injury_status or player.status or "").strip().upper() if player else ""
+        if (
+            player is None
+            or player.platform_id in existing
+            or player.primary_position not in {Position.QB, Position.RB, Position.WR, Position.TE}
+            or context.active is not True
+            or context.depth_chart_position != 1
+            or context.verified_projection is None
+            or status in unavailable
+        ):
+            continue
+        value = context.verified_projection
+        restored.append(Projection(
+            name=player.name,
+            team=player.team,
+            platform_id=player.platform_id,
+            projected_points=round(value, 3),
+            floor=round(value * .55, 3),
+            ceiling=round(value * 1.65, 3),
+            p10=round(value * .30, 3),
+            p25=round(value * .55, 3),
+            p75=round(value * 1.30, 3),
+            p90=round(value * 1.65, 3),
+            bust_probability=.45,
+            sample_size=0,
+            opportunity_stability=None,
+            data_age_periods=0,
+        ))
+    return estimate_cfb_ownership(slate, tuple(restored))
 
 
 def apply_cfb_game_lines(

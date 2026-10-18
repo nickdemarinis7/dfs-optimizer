@@ -7,7 +7,10 @@ import unittest
 from dfs_optimizer.importers import import_salary_csv
 from dfs_optimizer.models import ContestFormat, Platform, Sport
 from dfs_optimizer.projections import build_platform_average_projections
-from dfs_optimizer.services.ownership import estimate_nfl_showdown_ownership
+from dfs_optimizer.services.ownership import (
+    estimate_nfl_classic_ownership,
+    estimate_nfl_showdown_ownership,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +27,23 @@ def make_single_game_slate(platform: Platform):
 
 
 class NFLOwnershipEstimateTests(unittest.TestCase):
+    def test_scales_classic_estimates_to_nine_roster_slots(self) -> None:
+        slate = import_salary_csv(next((ROOT / "samples").glob("*134747-players-list.csv")))
+        projections = build_platform_average_projections(slate)
+
+        estimated = estimate_nfl_classic_ownership(slate, projections)
+
+        self.assertAlmostEqual(
+            sum(item.projected_ownership or 0 for item in estimated), 900, places=1
+        )
+        self.assertTrue(all(
+            0 <= (item.projected_ownership or 0) <= 45 for item in estimated
+        ))
+        self.assertGreater(
+            max(estimated, key=lambda item: item.projected_points).projected_ownership,
+            min(estimated, key=lambda item: item.projected_points).projected_ownership,
+        )
+
     def test_scales_showdown_estimates_to_six_roster_slots(self) -> None:
         slate, projections = make_single_game_slate(Platform.DRAFTKINGS)
 

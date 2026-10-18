@@ -19,6 +19,7 @@ class ClassicOptimizationSettings:
     locked_player_ids: frozenset[str] = frozenset()
     excluded_player_ids: frozenset[str] = frozenset()
     limited_player_ids: frozenset[str] = frozenset()
+    player_exposure_limits: tuple[tuple[str, float], ...] = ()
     fragile_player_ids: frozenset[str] = frozenset()
     maximum_fragile_players: int | None = None
     qb_stack_size: int = 0
@@ -37,6 +38,13 @@ class ClassicOptimizationSettings:
             raise ValueError("a player cannot be both locked and excluded")
         if self.locked_player_ids & self.limited_player_ids:
             raise ValueError("a locked player cannot be limited to one lineup")
+        exposure_ids = [player_id for player_id, _ in self.player_exposure_limits]
+        if len(exposure_ids) != len(set(exposure_ids)):
+            raise ValueError("player exposure limits cannot contain duplicate player ids")
+        if any(not 0 < limit <= 1 for _, limit in self.player_exposure_limits):
+            raise ValueError("player exposure limits must be greater than 0 and at most 1")
+        if self.locked_player_ids & set(exposure_ids):
+            raise ValueError("a locked player cannot have a player-specific exposure limit")
         if self.maximum_fragile_players is not None and self.maximum_fragile_players < 0:
             raise ValueError("maximum_fragile_players cannot be negative")
         if self.qb_stack_size not in (0, 1, 2):
@@ -112,6 +120,7 @@ def generate_classic_lineups(
         if any(not 0 <= weight <= 1 for weight in lineup_ceiling_weights):
             raise ValueError("lineup ceiling weights must be between 0 and 1")
     base_settings = settings or ClassicOptimizationSettings()
+    player_exposure_limits = dict(base_settings.player_exposure_limits)
     maximum_appearances = max(1, math.floor(count * maximum_player_exposure))
     maximum_qb_appearances = max(1, math.floor(count * maximum_qb_exposure))
     maximum_dst_appearances = max(1, math.floor(count * maximum_dst_exposure))
@@ -136,6 +145,12 @@ def generate_classic_lineups(
                 or (
                     player_id in base_settings.limited_player_ids
                     and appearances_so_far >= 1
+                )
+                or (
+                    player_id in player_exposure_limits
+                    and appearances_so_far >= max(
+                        1, math.floor(count * player_exposure_limits[player_id])
+                    )
                 )
             )
             and player_id not in base_settings.locked_player_ids
@@ -234,6 +249,11 @@ def generate_classic_3max_portfolio(
             else maximum_dst_appearances if player.primary_position == Position.DST
             else maximum_player_appearances
         )
+        specific_limit = dict(settings.player_exposure_limits).get(player_id)
+        if specific_limit is not None:
+            appearance_limit = min(
+                appearance_limit, max(1, math.floor(3 * specific_limit))
+            )
         model.add(
             sum(selected[index] for index, ids in enumerate(player_sets) if player_id in ids)
             <= appearance_limit
@@ -283,7 +303,8 @@ def generate_classic_3max_portfolio(
     )
 
     solver = cp_model.CpSolver()
-    solver.parameters.num_search_workers = 8
+    solver.parameters.num_search_workers = 1
+    solver.parameters.random_seed = 0
     solver.parameters.max_time_in_seconds = 15
     status = solver.solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -492,7 +513,8 @@ def _optimize_classic_lineup(
     )
 
     solver = cp_model.CpSolver()
-    solver.parameters.num_search_workers = 8
+    solver.parameters.num_search_workers = 1
+    solver.parameters.random_seed = 0
     solver.parameters.max_time_in_seconds = 15
     status = solver.solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):

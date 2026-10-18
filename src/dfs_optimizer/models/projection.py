@@ -18,6 +18,12 @@ class Projection:
     p75: float | None = None
     p90: float | None = None
     bust_probability: float | None = None
+    sample_size: int | None = None
+    opportunity_stability: float | None = None
+    data_age_periods: int | None = None
+    confidence_score: float | None = None
+    confidence_tier: str | None = None
+    confidence_reasons: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -34,6 +40,8 @@ class Projection:
             "p75": self.p75,
             "p90": self.p90,
             "bust_probability": self.bust_probability,
+            "opportunity_stability": self.opportunity_stability,
+            "confidence_score": self.confidence_score,
         }
         non_finite = [
             field for field, value in numeric_values.items()
@@ -60,3 +68,15 @@ class Projection:
             raise ValueError(f"outcome percentiles are not ordered for {self.name}")
         if self.bust_probability is not None and not 0 <= self.bust_probability <= 1:
             raise ValueError(f"bust probability must be between 0 and 1 for {self.name}")
+        if self.sample_size is not None and self.sample_size < 0:
+            raise ValueError(f"sample size cannot be negative for {self.name}")
+        if self.data_age_periods is not None and self.data_age_periods < 0:
+            raise ValueError(f"data age cannot be negative for {self.name}")
+        if self.opportunity_stability is not None and not 0 <= self.opportunity_stability <= 1:
+            raise ValueError(f"opportunity stability must be between 0 and 1 for {self.name}")
+        if self.confidence_score is not None and not 0 <= self.confidence_score <= 100:
+            raise ValueError(f"confidence score must be between 0 and 100 for {self.name}")
+        if self.confidence_tier is not None and self.confidence_tier not in {
+            "High", "Medium", "Low", "Unrated"
+        }:
+            raise ValueError(f"invalid confidence tier for {self.name}")

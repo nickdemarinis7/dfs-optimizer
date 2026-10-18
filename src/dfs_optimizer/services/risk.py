@@ -2,9 +2,83 @@ from __future__ import annotations
 
 from dfs_optimizer.models import ContestFormat, Position, Projection, Slate, Sport
 from .player_context import PlayerContext
+from .opportunity import apply_opportunity_risk
 
 
 UNAVAILABLE_STATUSES = frozenset({"IR", "O", "OUT"})
+
+
+def suggest_player_exposure_limits(
+    slate: Slate,
+    projections: tuple[Projection, ...],
+    contexts: tuple[PlayerContext, ...] = (),
+    opportunity_assessments=(),
+) -> dict[str, float]:
+    """Return portfolio-size-aware caps for volatile CFB Classic players.
+
+    The fractions are converted to integer appearance limits by the optimizer,
+    so a 50% cap permits one appearance in a three-lineup portfolio, five in
+    ten, and ten in twenty. Stronger availability or role concerns receive a
+    25% cap. Definitively unavailable players are handled by default excludes.
+    """
+    if slate.contest_format != ContestFormat.CLASSIC:
+        return {}
+    if slate.sport == Sport.NFL:
+        assessments = tuple(opportunity_assessments)
+        if not assessments:
+            _, assessments = apply_opportunity_risk(slate, projections, contexts)
+        return {
+            item.platform_id: .34 if item.tier == "Fragile" else .50
+            for item in assessments
+            if item.tier in {"Fragile", "Watch"}
+        }
+    if slate.sport != Sport.CFB:
+        return {}
+    projection_by_id = {
+        item.platform_id: item for item in projections if item.platform_id
+    }
+    context_by_id = {item.platform_id: item for item in contexts}
+    limits: dict[str, float] = {}
+    for player in slate.players:
+        if player.primary_position not in {Position.RB, Position.WR, Position.TE}:
+            continue
+        projection = projection_by_id.get(player.platform_id)
+        if projection is None:
+            continue
+        context = context_by_id.get(player.platform_id)
+        status = (
+            (context.injury_status if context else None) or player.status or ""
+        ).strip().upper()
+        depth = context.depth_chart_position if context else None
+        limit: float | None = None
+        if status in {"DOUBTFUL", "D"} or (depth is not None and depth >= 3):
+            limit = .25
+        elif status in {"QUESTIONABLE", "Q"} or (
+            player.primary_position == Position.TE
+            and depth is not None
+            and depth >= 2
+        ):
+            limit = .34
+        if (projection.bust_probability or 0) >= .55:
+            limit = min(limit or 1, .34)
+        elif (projection.bust_probability or 0) >= .44:
+            limit = min(limit or 1, .50)
+        if (
+            projection.floor is not None
+            and projection.projected_points > 0
+            and projection.floor <= projection.projected_points * .20
+        ):
+            limit = min(limit or 1, .34)
+        if context and context.verified_projection is not None:
+            limit = min(limit or 1, .34)
+        if projection.confidence_score is not None:
+            if projection.confidence_score < 40:
+                limit = min(limit or 1, .25)
+            elif projection.confidence_score < 55:
+                limit = min(limit or 1, .34)
+        if limit is not None:
+            limits[player.platform_id] = limit
+    return limits
 
 
 def suggest_default_excluded_player_ids(
@@ -162,11 +236,15 @@ def suggest_max_once_player_ids(
             for player in slate.players
             if player.primary_position in {Position.RB, Position.WR, Position.TE}
             and (projection := by_id.get(player.platform_id)) is not None
-            and projection.projected_points < 15
             and (
-                (projection.bust_probability or 0) >= .42
+                (projection.bust_probability or 0) >= .44
                 or (
-                    projection.floor is not None
+                    projection.projected_points < 15
+                    and (projection.bust_probability or 0) >= .42
+                )
+                or (
+                    projection.projected_points < 15
+                    and projection.floor is not None
                     and projection.floor <= projection.projected_points * .25
                 )
             )

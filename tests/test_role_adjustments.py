@@ -66,7 +66,7 @@ class CurrentRoleAdjustmentTests(unittest.TestCase):
             Projection(
                 "Former fill in", "LV", 8, platform_id="te2",
                 floor=3, ceiling=14, p10=1, p25=3, p75=10, p90=14,
-                bust_probability=.30,
+                bust_probability=.30, opportunity_stability=.25,
             ),
         )
         contexts = (
@@ -80,10 +80,34 @@ class CurrentRoleAdjustmentTests(unittest.TestCase):
 
         by_id = {item.platform_id: item for item in adjusted}
         self.assertEqual(by_id["te1"].projected_points, 12)
-        self.assertAlmostEqual(by_id["te2"].projected_points, 5.2)
-        self.assertAlmostEqual(by_id["te2"].ceiling, 9.1)
+        self.assertAlmostEqual(by_id["te2"].projected_points, 6)
+        self.assertAlmostEqual(by_id["te2"].ceiling, 10.5)
         self.assertGreater(by_id["te2"].bust_probability, .30)
         self.assertEqual(audit[0].depth_order, 2)
+        self.assertIn("opportunity decline", audit[0].reason)
+
+    def test_does_not_reduce_te2_median_when_recent_role_is_stable(self) -> None:
+        players = (
+            Player("te1", "Starter", Position.TE, (Position.TE,), 6000, "DET", "ARI", "DET@ARI"),
+            Player("te2", "Package tight end", Position.TE, (Position.TE,), 4000, "DET", "ARI", "DET@ARI"),
+        )
+        slate = Slate(Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, players, "test")
+        projections = (
+            Projection("Starter", "DET", 13, platform_id="te1"),
+            Projection(
+                "Package tight end", "DET", 8, platform_id="te2",
+                floor=3, ceiling=16, opportunity_stability=.85,
+            ),
+        )
+        contexts = (
+            PlayerContext("te1", 1, None, None, True),
+            PlayerContext("te2", 2, None, None, True),
+        )
+
+        adjusted, audit = apply_current_role_adjustments(slate, projections, contexts)
+
+        self.assertEqual(adjusted, projections)
+        self.assertEqual(audit, ())
 
     def test_does_not_penalize_backup_when_starter_is_out(self) -> None:
         players = (
@@ -135,7 +159,10 @@ class CurrentRoleAdjustmentTests(unittest.TestCase):
         slate = Slate(Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, players, "test")
         projections = (
             Projection("Starter", "SEA", 15, platform_id="wr1"),
-            Projection("Reserve", "SEA", 4, platform_id="wr4", floor=0, ceiling=10),
+            Projection(
+                "Reserve", "SEA", 4, platform_id="wr4", floor=0, ceiling=10,
+                opportunity_stability=.20,
+            ),
         )
         contexts = (
             PlayerContext("wr1", 1, None, None, True),

@@ -30,18 +30,27 @@ from dfs_optimizer.optimization import (
 )
 from dfs_optimizer.services.projections import apply_uploaded_ownership
 from dfs_optimizer.services.ownership import (
+    NFL_CLASSIC_OWNERSHIP_MODEL_VERSION,
     NFL_SHOWDOWN_OWNERSHIP_MODEL_VERSION,
-    estimate_nfl_showdown_ownership,
+    estimate_nfl_ownership,
 )
+from dfs_optimizer.services.opportunity import apply_opportunity_risk
 from dfs_optimizer.services.role_adjustments import apply_current_role_adjustments
 from dfs_optimizer.services.player_context import (
     fetch_player_context,
+    import_player_context_csv,
+    player_context_csv_template,
     summarize_prelock_context,
+    verified_player_context_ids,
+    unverified_selected_player_ids,
 )
 from dfs_optimizer.services.risk import (
     suggest_default_excluded_player_ids,
     suggest_max_once_player_ids,
+    suggest_player_exposure_limits,
 )
+from dfs_optimizer.services.cfb_projections import restore_verified_cfb_starters
+from dfs_optimizer.services.confidence import apply_projection_confidence
 from dfs_optimizer.services.scenarios import simulate_lineups
 try:
     from dfs_optimizer.services.run_archive import build_run_archive, save_run_archive
@@ -66,30 +75,6 @@ if slate is None or not projections:
     st.warning("Build projections on the Slate & projections screen first.", icon=":material/arrow_back:")
     st.stop()
 
-player_context = tuple(st.session_state.get("player_context", ()))
-base_projections = tuple(st.session_state.get("base_projections", ())) or tuple(projections)
-st.session_state["base_projections"] = base_projections
-projections, role_adjustments = apply_current_role_adjustments(
-    slate, base_projections, player_context
-)
-projections = estimate_nfl_showdown_ownership(slate, projections)
-st.session_state["projections"] = projections
-st.session_state["role_adjustments"] = role_adjustments
-projection_by_id = {item.platform_id: item for item in projections}
-role_adjustment_by_id = {item.platform_id: item for item in role_adjustments}
-context_by_id = {item.platform_id: item for item in player_context}
-cfb_game_environments = st.session_state.get("cfb_game_environments", {})
-default_unique = 3 if slate.contest_format == ContestFormat.CLASSIC else 2
-players = {p.platform_id: p for p in slate.players if p.platform_id in projection_by_id}
-suggested_max_once = suggest_max_once_player_ids(
-    slate, tuple(projections), player_context
-) & players.keys()
-suggested_excluded = (
-    suggest_default_excluded_player_ids(slate, tuple(projections), player_context)
-    & players.keys()
-)
-label = lambda pid: f"{players[pid].name} — {players[pid].team} {players[pid].primary_position.value}"
-
 
 def context_age_minutes() -> float | None:
     checked_at = st.session_state.get("player_context_built_at")
@@ -99,15 +84,63 @@ def context_age_minutes() -> float | None:
         checked_at = checked_at.replace(tzinfo=timezone.utc)
     return max(0.0, (datetime.now(timezone.utc) - checked_at).total_seconds() / 60)
 
+player_context = tuple(st.session_state.get("player_context", ()))
+canonical_base_projections = (
+    tuple(st.session_state.get("base_projections", ())) or tuple(projections)
+)
+base_projections = restore_verified_cfb_starters(
+    slate, canonical_base_projections, player_context
+)
+projections, role_adjustments = apply_current_role_adjustments(
+    slate, base_projections, player_context
+)
+projections, opportunity_assessments = apply_opportunity_risk(
+    slate, projections, player_context
+)
+projections = estimate_nfl_ownership(slate, projections)
+projections = apply_projection_confidence(
+    slate, projections, player_context,
+    context_age_minutes=context_age_minutes(),
+)
+st.session_state["projections"] = projections
+st.session_state["role_adjustments"] = role_adjustments
+st.session_state["opportunity_assessments"] = opportunity_assessments
+projection_by_id = {item.platform_id: item for item in projections}
+role_adjustment_by_id = {item.platform_id: item for item in role_adjustments}
+opportunity_by_id = {item.platform_id: item for item in opportunity_assessments}
+context_by_id = {item.platform_id: item for item in player_context}
+cfb_game_environments = st.session_state.get("cfb_game_environments", {})
+default_unique = 3 if slate.contest_format == ContestFormat.CLASSIC else 2
+players = {p.platform_id: p for p in slate.players if p.platform_id in projection_by_id}
+suggested_max_once = suggest_max_once_player_ids(
+    slate, tuple(projections), player_context
+) & players.keys()
+suggested_exposure_limits = suggest_player_exposure_limits(
+    slate, tuple(projections), player_context, opportunity_assessments
+)
+if slate.sport == Sport.CFB and slate.contest_format == ContestFormat.CLASSIC:
+    # CFB volatility should scale with portfolio size instead of turning every
+    # risk flag into the same hard one-lineup constraint.
+    suggested_max_once = frozenset()
+suggested_excluded = (
+    suggest_default_excluded_player_ids(slate, tuple(projections), player_context)
+    & players.keys()
+)
+label = lambda pid: f"{players[pid].name} — {players[pid].team} {players[pid].primary_position.value}"
 
-def store_player_context(items) -> None:
+
+def store_player_context(items, source: str = "Sleeper daily player map") -> None:
     st.session_state["player_context"] = tuple(items)
+    st.session_state["player_context_source"] = source
     st.session_state["player_context_error"] = None
     st.session_state["player_context_built_at"] = datetime.now(timezone.utc)
     st.session_state["player_context_attempted"] = True
 
 
 prelock = summarize_prelock_context(slate, player_context)
+cfb_context_confirmed = True
+cfb_acknowledged_ids = frozenset()
+cfb_pending_key = f"cfb-unverified-selected-{hash(slate)}"
 attention_ids = (
     prelock.questionable_player_ids
     | prelock.unavailable_player_ids
@@ -238,13 +271,13 @@ else:
     current_projection_key = st.session_state.get("projection_key") or ()
     cfb_model = (
         "recent-form forecast"
-        if current_projection_key and current_projection_key[0] == "cfb-recent-usage-v7"
+        if current_projection_key and current_projection_key[0] == "cfb-recent-usage-v8"
         else "platform-average baseline"
     )
     with st.container(border=True):
         section_intro(
             "College player check",
-            "Injury designations come from the uploaded salary file. Live college depth-chart data is not connected yet.",
+            "Combine salary-file designations with a current availability and depth-chart snapshot before lock.",
             icon=":material/sports_football:",
         )
         unavailable_count = len(prelock.unavailable_player_ids)
@@ -253,6 +286,48 @@ else:
             f"{unavailable_count} unavailable · {questionable_count} injury watch · "
             f"{cfb_model}"
         )
+        st.download_button(
+            "Download availability template",
+            player_context_csv_template(slate),
+            "cfb-player-context.csv",
+            "text/csv",
+            icon=":material/download:",
+            width="stretch",
+        )
+        context_file = st.file_uploader(
+            "Current availability / depth-chart CSV (recommended)",
+            type="csv",
+            key=f"cfb-player-context-{hash(slate)}",
+            help=(
+                "Use the template above. Status values such as OUT or QUESTIONABLE, "
+                "depth order, and active=false feed directly into exclusions and role limits. "
+                "To add a new starter with no season usage, set depth_chart_position=1, "
+                "active=true, and enter a positive verified_projection."
+            ),
+        )
+        if context_file is not None:
+            content = context_file.getvalue()
+            context_hash = hashlib.sha256(content).hexdigest()
+            if st.session_state.get("cfb_player_context_hash") != context_hash:
+                try:
+                    imported_context = import_player_context_csv(slate, content)
+                    store_player_context(
+                        imported_context,
+                        f"Uploaded CFB context: {context_file.name}",
+                    )
+                    st.session_state["cfb_player_context_hash"] = context_hash
+                    st.toast(
+                        f"Matched current context for {len(imported_context)} players.",
+                        icon=":material/check_circle:",
+                    )
+                    st.rerun()
+                except (UnicodeError, ValueError) as exc:
+                    st.error(str(exc), icon=":material/error:")
+        if player_context:
+            st.caption(
+                f"Current role snapshot matched {len(player_context)} players · "
+                f"{st.session_state.get('player_context_source', 'uploaded context')}"
+            )
         if cfb_model == "recent-form forecast":
             platform_average_by_id = {
                 player.platform_id: player.platform_average
@@ -267,8 +342,8 @@ else:
                 ) >= .05
             )
             st.caption(
-                f"{adjusted} players were adjusted using current-season game history; "
-                "unmatched players retain the platform baseline."
+                f"{adjusted} players were adjusted using current-season game history. "
+                "Players without verified current-season usage are removed from the pool."
             )
         ownership_count = sum(
             projection.projected_ownership is not None
@@ -302,6 +377,14 @@ else:
                 + ". They are preselected for exclusion; confirm before building.",
                 icon=":material/shield:",
             )
+        cfb_context_confirmed = st.checkbox(
+            "I checked final availability and starting quarterbacks for this slate",
+            key=f"cfb-final-status-confirmed-{hash(slate)}",
+            help=(
+                "Confirm this only after reviewing official team or conference updates. "
+                "The optimizer cannot infer every late scratch from historical usage."
+            ),
+        )
 
 if not player_context and st.session_state.get("player_context_error"):
     st.warning(
@@ -423,17 +506,32 @@ if customize_strategy:
             ownership_hash = hashlib.sha256(content).hexdigest()
             if st.session_state.get("ownership_hash") != ownership_hash:
                 try:
-                    base_projections, matches = apply_uploaded_ownership(
-                        slate, base_projections, ownership.name, content
+                    canonical_base_projections, matches = apply_uploaded_ownership(
+                        slate, canonical_base_projections, ownership.name, content
+                    )
+                    base_projections = restore_verified_cfb_starters(
+                        slate, canonical_base_projections, player_context
                     )
                     projections, role_adjustments = apply_current_role_adjustments(
                         slate, base_projections, player_context
                     )
-                    projections = estimate_nfl_showdown_ownership(slate, projections)
-                    st.session_state["base_projections"] = base_projections
+                    projections, opportunity_assessments = apply_opportunity_risk(
+                        slate, projections, player_context
+                    )
+                    projections = estimate_nfl_ownership(slate, projections)
+                    projections = apply_projection_confidence(
+                        slate, projections, player_context,
+                        context_age_minutes=context_age_minutes(),
+                    )
+                    # Keep the canonical model output separate from temporary
+                    # context-based starter restorations. If a verification is
+                    # corrected later, the player must disappear on rerun.
+                    st.session_state["base_projections"] = canonical_base_projections
                     st.session_state["projections"] = projections
                     st.session_state["role_adjustments"] = role_adjustments
                     st.session_state["ownership_hash"] = ownership_hash
+                    st.session_state["ownership_content"] = content
+                    st.session_state["ownership_name"] = ownership.name
                     st.toast(f"Matched ownership for {matches} players.", icon=":material/check:")
                     st.rerun()
                 except (OSError, ValueError) as exc:
@@ -465,10 +563,14 @@ def include_in_status_view(player) -> bool:
         | prelock.backup_quarterback_ids
         | prelock.subordinate_skill_player_ids
     )
+    opportunity_flagged = (
+        (opportunity := opportunity_by_id.get(player.platform_id)) is not None
+        and opportunity.tier in {"Watch", "Fragile"}
+    )
     if status_view == "Available":
-        return not status and not context_flagged
+        return not status and not context_flagged and not opportunity_flagged
     if status_view == "Flagged":
-        return bool(status) or context_flagged
+        return bool(status) or context_flagged or opportunity_flagged
     if status_view == "Unavailable":
         return (
             status in unavailable_statuses
@@ -483,6 +585,7 @@ for player in players.values():
         continue
     projection = projection_by_id[player.platform_id]
     role_adjustment = role_adjustment_by_id.get(player.platform_id)
+    opportunity = opportunity_by_id.get(player.platform_id)
     row = {
         "Player": player.name,
         "Pos": player.primary_position.value,
@@ -495,6 +598,16 @@ for player in players.values():
             100 * projection.bust_probability
             if projection.bust_probability is not None else None
         ),
+        "Risk cap %": (
+            100 * suggested_exposure_limits[player.platform_id]
+            if player.platform_id in suggested_exposure_limits else None
+        ),
+        "Confidence": projection.confidence_tier or "Unrated",
+        "Confidence %": projection.confidence_score,
+        "Confidence why": "; ".join(projection.confidence_reasons) or "—",
+        "Opportunity": opportunity.tier if opportunity else "Unrated",
+        "Opportunity %": opportunity.score if opportunity else None,
+        "Opportunity why": "; ".join(opportunity.reasons) if opportunity else "—",
         "Est. own %": projection.projected_ownership,
         "Status": (player.status or "Available").upper(),
         "Role": context_by_id[player.platform_id].role_label if player.platform_id in context_by_id else "—",
@@ -521,6 +634,30 @@ st.dataframe(
         "Projection": st.column_config.NumberColumn(format="%.1f"),
         "P90": st.column_config.NumberColumn(format="%.1f"),
         "Bust %": st.column_config.NumberColumn(format="%.0f%%"),
+        "Risk cap %": st.column_config.NumberColumn(
+            format="%.0f%%",
+            help="Automatic portfolio cap from modeled bust risk, floor, current role, and availability.",
+        ),
+        "Confidence %": st.column_config.NumberColumn(
+            format="%.0f%%",
+            help="Evidence score from sample size, opportunity stability, outcome range, bust risk, data age, and current role context.",
+        ),
+        "Confidence": st.column_config.TextColumn(
+            help="High is 75+, Medium is 55–74, Low is below 55, and Unrated lacks enough metadata.",
+        ),
+        "Confidence why": st.column_config.TextColumn(
+            help="The evidence that raised or lowered this player's confidence score.",
+        ),
+        "Opportunity %": st.column_config.NumberColumn(
+            format="%.0f%%",
+            help="Current-role evidence from recent usage and snap trends, depth order, availability, floor, and bust risk.",
+        ),
+        "Opportunity": st.column_config.TextColumn(
+            help="Strong, Usable, Watch, or Fragile. Fragile roles receive wider downside and stricter portfolio controls.",
+        ),
+        "Opportunity why": st.column_config.TextColumn(
+            help="The evidence behind the current opportunity grade.",
+        ),
         "Est. own %": st.column_config.NumberColumn(
             format="%.1f%%",
             help="Estimated from this slate's salary, projection, value, ceiling, and position rank. It is not reported contest ownership.",
@@ -558,6 +695,33 @@ with st.container(border=True):
     )
 locked_ids, excluded_ids = frozenset(locked), frozenset(excluded)
 limited_ids = frozenset(max_once) - locked_ids - excluded_ids
+if slate.sport == Sport.CFB:
+    current_verified_context_ids = verified_player_context_ids(player_context)
+    pending_unverified_ids = tuple(
+        player_id
+        for player_id in st.session_state.get(cfb_pending_key, ())
+        if player_id in players
+        and player_id not in excluded_ids
+        and player_id not in current_verified_context_ids
+    )
+    if pending_unverified_ids:
+        with st.container(border=True):
+            section_intro(
+                "Verify selected college players",
+                "These players were selected in the provisional portfolio but have no meaningful current availability or depth-chart row.",
+                icon=":material/fact_check:",
+            )
+            st.warning(
+                "Confirm every player individually or exclude them. Generation remains blocked until all selected players are resolved.",
+                icon=":material/gpp_maybe:",
+            )
+            cfb_acknowledged_ids = frozenset(st.multiselect(
+                "Players personally checked against a current team or conference source",
+                pending_unverified_ids,
+                format_func=label,
+                key=f"cfb-acknowledged-selected-{hash(slate)}",
+                help="Selecting a player records a manual override in the run archive. It does not create injury or depth-chart data.",
+            ))
 ownership_coverage = (
     sum(item.projected_ownership is not None for item in projections) / len(projections)
     if projections else 0
@@ -568,7 +732,7 @@ ownership_source = (
     else "slate-relative estimate"
     if ownership_coverage and (
         slate.sport == Sport.CFB
-        or slate.contest_format == ContestFormat.SINGLE_GAME
+        or slate.sport == Sport.NFL
     )
     else "model-provided"
     if ownership_coverage
@@ -612,6 +776,7 @@ config_key = (
     require_bring_back if slate.contest_format == ContestFormat.CLASSIC else None,
     maximum_multiplier_exposure if slate.contest_format == ContestFormat.SINGLE_GAME else None,
     tuple(sorted((item.platform_id, item.factor) for item in role_adjustments)),
+    tuple(sorted(cfb_acknowledged_ids)) if slate.sport == Sport.CFB else None,
 )
 st.session_state["current_config_key"] = config_key
 if st.session_state.get("lineups") and st.session_state.get("lineup_config_key") != config_key:
@@ -626,6 +791,10 @@ with st.bottom:
 
 if generate_clicked:
     try:
+        if slate.sport == Sport.CFB and not cfb_context_confirmed:
+            raise RuntimeError(
+                "Confirm the final CFB availability and starting-quarterback check before generating."
+            )
         generation_warning = None
         live_context = player_context
         live_age = context_age_minutes()
@@ -645,8 +814,17 @@ if generate_clicked:
         projections, role_adjustments = apply_current_role_adjustments(
             slate, base_projections, tuple(live_context)
         )
+        projections, opportunity_assessments = apply_opportunity_risk(
+            slate, projections, tuple(live_context)
+        )
+        projections = estimate_nfl_ownership(slate, projections)
+        projections = apply_projection_confidence(
+            slate, projections, tuple(live_context),
+            context_age_minutes=context_age_minutes(),
+        )
         st.session_state["projections"] = projections
         st.session_state["role_adjustments"] = role_adjustments
+        st.session_state["opportunity_assessments"] = opportunity_assessments
         live_excluded = suggest_default_excluded_player_ids(
             slate, tuple(projections), live_context
         ) & players.keys()
@@ -660,9 +838,21 @@ if generate_clicked:
         live_limited = suggest_max_once_player_ids(
             slate, tuple(projections), live_context
         ) & players.keys()
+        live_exposure_limits = suggest_player_exposure_limits(
+            slate, tuple(projections), live_context, opportunity_assessments
+        )
+        if slate.sport == Sport.CFB and slate.contest_format == ContestFormat.CLASSIC:
+            live_limited = frozenset()
         effective_limited_ids = (
             limited_ids | live_limited
         ) - locked_ids - effective_excluded_ids
+        effective_exposure_limits = tuple(sorted(
+            (player_id, limit)
+            for player_id, limit in live_exposure_limits.items()
+            if player_id not in locked_ids
+            and player_id not in effective_excluded_ids
+            and player_id not in effective_limited_ids
+        ))
         effective_player_exposure = maximum_player_exposure
         effective_minimum_unique = minimum_unique
         effective_ownership_penalty = (
@@ -670,7 +860,6 @@ if generate_clicked:
             else .025 if slate.sport == Sport.CFB and ownership_coverage >= .75
             else .01 if (
                 slate.sport == Sport.NFL
-                and slate.contest_format == ContestFormat.SINGLE_GAME
                 and ownership_source == "slate-relative estimate"
                 and ownership_coverage >= .75
             )
@@ -683,6 +872,7 @@ if generate_clicked:
                     locked_player_ids=locked_ids,
                     excluded_player_ids=effective_excluded_ids,
                     limited_player_ids=effective_limited_ids,
+                    player_exposure_limits=effective_exposure_limits,
                     fragile_player_ids=live_limited,
                     maximum_fragile_players=2,
                     qb_stack_size=1 if require_qb_stack else 0,
@@ -830,9 +1020,43 @@ if generate_clicked:
                     f"Only {len(lineups)} of {lineup_count} requested lineups could satisfy these settings. "
                     "Try raising exposure or lowering uniqueness."
                 )
+            if slate.sport == Sport.CFB:
+                selected_player_ids = {
+                    entry.player.platform_id
+                    for lineup in lineups
+                    for entry in lineup.entries
+                }
+                verified_context_ids = verified_player_context_ids(
+                    tuple(live_context)
+                )
+                unresolved_selected_ids = (
+                    selected_player_ids - verified_context_ids
+                )
+                unacknowledged_ids = unverified_selected_player_ids(
+                    selected_player_ids,
+                    tuple(live_context),
+                    cfb_acknowledged_ids,
+                )
+                st.session_state[cfb_pending_key] = tuple(sorted(
+                    unresolved_selected_ids
+                ))
+                if unacknowledged_ids:
+                    names = ", ".join(sorted(
+                        players[player_id].name
+                        for player_id in unacknowledged_ids
+                    ))
+                    raise RuntimeError(
+                        "Final CFB verification is required for the selected portfolio: "
+                        + names
+                        + ". Confirm each player in the verification panel or exclude them, then generate again."
+                    )
             status.update(label="Portfolio ready", state="complete", expanded=False)
         lineup_settings = {
             "strategy_version": "tournament-defaults-v3",
+            "projection_model_version": (
+                st.session_state.get("projection_key", (None,))[0]
+                if st.session_state.get("projection_key") else None
+            ),
             "portfolio_mode": portfolio_label, "lineups": lineup_count,
             "minimum_unique_players": effective_minimum_unique,
             "requested_minimum_unique_players": minimum_unique,
@@ -860,10 +1084,21 @@ if generate_clicked:
                 .06 if cfb_game_environments else None
             ),
             "player_context_coverage": (
-                len({item.platform_id for item in live_context} & players.keys())
+                len(verified_player_context_ids(tuple(live_context)) & players.keys())
                 / max(1, len(players))
             ),
-            "player_context_source": "Sleeper daily player map" if live_context else None,
+            "player_context_source": (
+                st.session_state.get("player_context_source") if live_context else None
+            ),
+            "cfb_final_status_confirmed_at": (
+                datetime.now(timezone.utc).isoformat()
+                if slate.sport == Sport.CFB and cfb_context_confirmed else None
+            ),
+            "cfb_manually_acknowledged_players": tuple(sorted(
+                players[player_id].name
+                for player_id in cfb_acknowledged_ids
+                if player_id in players
+            )),
             "player_context_checked_at": (
                 st.session_state["player_context_built_at"].isoformat()
                 if st.session_state.get("player_context_built_at") else None
@@ -875,6 +1110,7 @@ if generate_clicked:
                     "injury_status": item.injury_status,
                     "practice_participation": item.practice_participation,
                     "active": item.active,
+                    "verified_projection": item.verified_projection,
                 }
                 for item in live_context
                 if item.platform_id in players
@@ -892,14 +1128,36 @@ if generate_clicked:
                 }
                 for item in role_adjustments
             ),
+            "opportunity_assessments": tuple(
+                {
+                    "player": item.player,
+                    "score": item.score,
+                    "tier": item.tier,
+                    "range_factor": item.range_factor,
+                    "reasons": item.reasons,
+                }
+                for item in opportunity_assessments
+            ),
             "maximum_once_players": tuple(sorted(
                 players[player_id].name for player_id in effective_limited_ids
             )),
+            "automatic_player_exposure_limits": tuple(
+                {
+                    "player": players[player_id].name,
+                    "maximum_exposure": limit,
+                }
+                for player_id, limit in effective_exposure_limits
+                if player_id in players
+            ),
             "ceiling_lineup_number": lineup_count if include_ceiling_lineup else None,
             "ownership_coverage": ownership_coverage,
             "ownership_source": ownership_source,
             "ownership_model_version": (
-                NFL_SHOWDOWN_OWNERSHIP_MODEL_VERSION
+                NFL_CLASSIC_OWNERSHIP_MODEL_VERSION
+                if ownership_source == "slate-relative estimate"
+                and slate.sport == Sport.NFL
+                and slate.contest_format == ContestFormat.CLASSIC
+                else NFL_SHOWDOWN_OWNERSHIP_MODEL_VERSION
                 if ownership_source == "slate-relative estimate"
                 and slate.sport == Sport.NFL
                 else None
@@ -951,6 +1209,16 @@ if generate_clicked:
             f"{slate.contest_format.value}-{uuid4().hex[:6]}"
         )
         resolved_label = run_label.strip() or created_at.astimezone().strftime("%a %b %-d, %-I:%M %p")
+        input_snapshots = {}
+        if snapshot := st.session_state.get("projection_input_snapshot"):
+            input_snapshots[
+                st.session_state.get("projection_input_snapshot_name")
+                or "projection-input.csv"
+            ] = snapshot
+        if lines_snapshot := st.session_state.get("cfb_lines_content"):
+            input_snapshots["cfb-game-lines.csv"] = lines_snapshot
+        if ownership_snapshot := st.session_state.get("ownership_content"):
+            input_snapshots["uploaded-ownership.csv"] = ownership_snapshot
         run_archive = build_run_archive(
             slate,
             projections,
@@ -961,6 +1229,7 @@ if generate_clicked:
             run_label=resolved_label,
             created_at=created_at,
             projection_built_at=st.session_state.get("projection_built_at"),
+            input_snapshots=input_snapshots,
         )
         archive_name = (
             f"dfs-run-{slate.platform.value}-{slate.contest_format.value}.zip"

@@ -10,9 +10,11 @@ from dfs_optimizer.services.cfb_projections import (
     apply_cfb_game_lines,
     build_cfb_projections_from_file,
     cfb_consensus_lines_csv,
+    cfb_projection_input_snapshot,
     estimate_cfb_ownership,
     infer_cfb_season,
     infer_cfb_week,
+    restore_verified_cfb_starters,
 )
 from dfs_optimizer.data_sources import CFBConsensusLine
 
@@ -40,7 +42,7 @@ class CFBProjectionTests(unittest.TestCase):
             Sport.CFB,
         )
 
-    def test_builds_recent_form_forecast_and_preserves_fallback(self) -> None:
+    def test_builds_recent_form_forecast_and_rejects_stale_fallback(self) -> None:
         headers = (
             "game_id,season,week,team,opponent,completion_player,completion_yds,"
             "rush_player,rush_yds,reception_player,reception_yds,target_player,"
@@ -58,11 +60,62 @@ class CFBProjectionTests(unittest.TestCase):
 
         by_id = {item.platform_id: item for item in projections}
         self.assertGreater(by_id["qb"].projected_points, 10)
-        self.assertEqual(by_id["wr"].projected_points, 8)
+        self.assertNotIn("wr", by_id)
         self.assertLessEqual(by_id["qb"].p25, by_id["qb"].projected_points)
         self.assertGreaterEqual(by_id["qb"].p75, by_id["qb"].projected_points)
         self.assertIsNotNone(by_id["qb"].projected_ownership)
-        self.assertIsNotNone(by_id["wr"].projected_ownership)
+
+    def test_excludes_qb_who_missed_latest_team_game_for_another_qb(self) -> None:
+        backup = replace(
+            self.slate.players[0], platform_id="backup", name="Backup Quarterback"
+        )
+        slate = replace(self.slate, players=self.slate.players + (backup,))
+        headers = (
+            "game_id,season,week,team,opponent,completion_player,completion_yds,"
+            "rush_player,rush_yds,reception_player,reception_yds,target_player,"
+            "interception_thrown_player,interception_thrown_stat,touchdown_player\n"
+        )
+        rows = (
+            "1,2026,1,Alpha,Beta,Backup Quarterback,150,,,,,,,,\n"
+            "2,2026,2,Alpha,Gamma,Example Quarterback,200,,,,,,,,\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "stats.csv"
+            source.write_text(headers + rows, encoding="utf-8")
+            projections = build_cfb_projections_from_file(slate, source, 3)
+
+        ids = {item.platform_id for item in projections}
+        self.assertIn("qb", ids)
+        self.assertNotIn("backup", ids)
+
+    def test_restores_only_explicitly_verified_new_starter(self) -> None:
+        from dfs_optimizer.services.player_context import PlayerContext
+
+        context = PlayerContext("wr", 1, None, None, True, 12.5)
+        restored = restore_verified_cfb_starters(
+            self.slate,
+            (Projection(
+                "Example Quarterback Jr.", "AAA", 20, platform_id="qb"
+            ),),
+            (context,),
+        )
+        by_id = {item.platform_id: item for item in restored}
+
+        self.assertEqual(by_id["wr"].projected_points, 12.5)
+        self.assertEqual(by_id["wr"].bust_probability, .45)
+
+    def test_does_not_restore_unverified_or_inactive_player(self) -> None:
+        from dfs_optimizer.services.player_context import PlayerContext
+
+        contexts = (
+            PlayerContext("wr", 1, None, None, True, None),
+            PlayerContext("wr", 1, "OUT", None, False, 12.5),
+        )
+        for context in contexts:
+            restored = restore_verified_cfb_starters(
+                self.slate, (), (context,)
+            )
+            self.assertFalse(restored)
 
     def test_infers_season_from_slate_metadata(self) -> None:
         self.assertEqual(infer_cfb_season(self.slate), 2026)
@@ -281,6 +334,30 @@ class CFBProjectionTests(unittest.TestCase):
         )
         self.assertEqual(matched, 1)
         self.assertNotIn("CCC", content)
+
+    def test_projection_input_snapshot_excludes_irrelevant_and_future_rows(self) -> None:
+        headers = (
+            "game_id,season,week,team,opponent,completion_player,completion_yds,"
+            "rush_player,rush_yds,reception_player,reception_yds,target_player,"
+            "interception_thrown_player,interception_thrown_stat,touchdown_player\n"
+        )
+        rows = (
+            "1,2026,1,Alpha,Beta,Example Quarterback,100,,,,,,,,\n"
+            "4,2026,2,Alpha,Gamma,Alpha Teammate,75,,,,,,,,\n"
+            "2,2026,1,Other,Beta,Irrelevant Player,100,,,,,,,,\n"
+            "3,2026,3,Alpha,Beta,Example Quarterback,300,,,,,,,,\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "stats.csv"
+            source.write_text(headers + rows, encoding="utf-8")
+            snapshot = cfb_projection_input_snapshot(
+                self.slate, source, target_week=3
+            ).decode()
+
+        self.assertIn("Example Quarterback,100", snapshot)
+        self.assertIn("Alpha Teammate,75", snapshot)
+        self.assertNotIn("Irrelevant Player", snapshot)
+        self.assertNotIn("Example Quarterback,300", snapshot)
 
 
 if __name__ == "__main__":

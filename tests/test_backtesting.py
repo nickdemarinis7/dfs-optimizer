@@ -55,6 +55,8 @@ class ProjectionMetricTests(unittest.TestCase):
         self.assertEqual(metrics.ownership_mean_absolute_error, 2)
         self.assertEqual(metrics.ownership_mean_error, 0)
         self.assertEqual(metrics.ownership_correlation, 1)
+        self.assertEqual(metrics.zero_point_players, 0)
+        self.assertEqual(metrics.zero_point_rate, 0)
 
     def test_extracts_unmultiplied_showdown_player_results(self) -> None:
         csv_text = (
@@ -75,6 +77,18 @@ class ProjectionMetricTests(unittest.TestCase):
         self.assertEqual(results[0].position, "WR")
         self.assertEqual(results[0].fantasy_points, 12)
         self.assertEqual(results[0].drafted_percent, 50)
+
+    def test_sums_classic_ownership_across_eligible_slots(self) -> None:
+        csv_text = (
+            "Rank,EntryId,EntryName,Points,Lineup,,Player,Roster Position,%Drafted,FPTS\n"
+            "1,one,user,20,QB Other,,Test Player,RB,20%,12\n"
+            "1,one,user,20,QB Other,,Test Player,FLEX,8%,12\n"
+            "1,one,user,20,QB Other,,Test Player,S-FLEX,2%,12\n"
+        )
+        results = import_player_results_content(
+            csv_text.encode(), "results.csv", {"Test Player": "RB"}
+        )
+        self.assertEqual(results[0].drafted_percent, 30)
 
 
 if __name__ == "__main__":

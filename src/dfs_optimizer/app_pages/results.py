@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from datetime import datetime, timezone
 import hashlib
 
 import pandas as pd
@@ -15,7 +16,7 @@ from dfs_optimizer.app_ui import (
     section_intro,
 )
 from dfs_optimizer.exporters import lineups_csv_text, merge_lineups_into_template
-from dfs_optimizer.models import ContestFormat, Position
+from dfs_optimizer.models import ContestFormat, Position, Sport
 from dfs_optimizer.services.portfolio import analyze_portfolio
 from dfs_optimizer.services.preflight import preflight_lineups
 from dfs_optimizer.services.run_archive import build_run_archive
@@ -109,10 +110,30 @@ stale = (
     st.session_state.get("current_config_key") is not None
     and st.session_state.get("lineup_config_key") != st.session_state.get("current_config_key")
 )
-blocking = stale or report.blocking
+cfb_confirmation_stale = False
+if slate.sport == Sport.CFB:
+    confirmed_value = st.session_state.get("lineup_settings", {}).get(
+        "cfb_final_status_confirmed_at"
+    )
+    try:
+        confirmed_at = datetime.fromisoformat(confirmed_value)
+        if confirmed_at.tzinfo is None:
+            confirmed_at = confirmed_at.replace(tzinfo=timezone.utc)
+        cfb_confirmation_stale = (
+            datetime.now(timezone.utc) - confirmed_at
+        ).total_seconds() > 30 * 60
+    except (TypeError, ValueError):
+        cfb_confirmation_stale = True
+blocking = stale or cfb_confirmation_stale or report.blocking
 if stale:
     st.warning(
         "These results are stale because player decisions changed. Regenerate before exporting.",
+        icon=":material/update:",
+    )
+if cfb_confirmation_stale:
+    st.warning(
+        "The CFB availability confirmation is missing or more than 30 minutes old. "
+        "Return to Build, recheck final statuses and quarterbacks, then regenerate.",
         icon=":material/update:",
     )
 if blocking:

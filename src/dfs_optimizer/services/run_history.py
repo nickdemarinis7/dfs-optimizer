@@ -190,6 +190,17 @@ def _read_projections(content: bytes) -> tuple[Projection, ...]:
         p10=optional(row.get("p10")), p25=optional(row.get("p25")),
         p75=optional(row.get("p75")), p90=optional(row.get("p90")),
         bust_probability=optional(row.get("bust_probability")),
+        sample_size=(
+            int(row["sample_size"]) if row.get("sample_size") not in {None, ""} else None
+        ),
+        opportunity_stability=optional(row.get("opportunity_stability")),
+        data_age_periods=(
+            int(row["data_age_periods"])
+            if row.get("data_age_periods") not in {None, ""} else None
+        ),
+        confidence_score=optional(row.get("confidence_score")),
+        confidence_tier=row.get("confidence_tier") or None,
+        confidence_reasons=tuple(json.loads(row.get("confidence_reasons") or "[]")),
     ) for row in rows)
 
 

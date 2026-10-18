@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from dfs_optimizer.models import ContestFormat, Platform
 from dfs_optimizer.optimization import generate_classic_lineups
 from dfs_optimizer.services import (
+    analyze_winner_strategies,
     CapturedSubmission,
     SavedPortfolio,
     classify_submitted_entry_provenance,
@@ -18,6 +19,41 @@ from test_classic_optimizer import make_slate
 
 
 class ResultsReviewTests(unittest.TestCase):
+    def test_analyzes_winner_strategy_without_overweighting_duplicates(self) -> None:
+        slate, matches = make_slate(Platform.DRAFTKINGS)
+        lineup = generate_classic_lineups(slate, matches, 1)[0]
+        lineup_text = "  ".join(
+            f"{entry.slot.rstrip('123')} {entry.player.name}"
+            for entry in lineup.entries
+        )
+        output = io.StringIO(newline="")
+        writer = csv.writer(output)
+        writer.writerow((
+            "Rank", "EntryId", "EntryName", "Points", "Lineup",
+            "Player", "Roster Position", "%Drafted", "FPTS",
+        ))
+        for entry_id in ("winner-1", "winner-2"):
+            for index, lineup_entry in enumerate(lineup.entries):
+                writer.writerow((
+                    1, entry_id, "winner", 200, lineup_text,
+                    lineup_entry.player.name,
+                    lineup_entry.player.primary_position.value,
+                    f"{10 + index}%", 20,
+                ))
+
+        report = analyze_winner_strategies(
+            output.getvalue().encode(), "results.csv", slate
+        )
+
+        self.assertEqual(report.field_size, 2)
+        self.assertEqual(len(report.winner_lineups), 1)
+        self.assertEqual(report.winner_lineups[0].duplication, 2)
+        self.assertEqual(report.bands[0].label, "Winner")
+        self.assertEqual(report.bands[0].unique_lineups, 1)
+        self.assertEqual(report.bands[0].average_duplication, 2)
+        self.assertTrue(report.bands[0].qb_stack_rate)
+        self.assertIsNotNone(report.bands[0].average_salary_left)
+
     def test_matches_generated_classic_lineup(self) -> None:
         slate, matches = make_slate(Platform.DRAFTKINGS)
         lineups = generate_classic_lineups(slate, matches, 1)
@@ -45,6 +81,33 @@ class ResultsReviewTests(unittest.TestCase):
         self.assertEqual(review.lineups[0].score, 150.5)
         self.assertEqual(review.lineups[0].rank, 2)
         self.assertFalse(review.unmatched_lineups)
+
+    def test_reports_zero_point_players_in_generated_lineup(self) -> None:
+        slate, matches = make_slate(Platform.DRAFTKINGS)
+        lineups = generate_classic_lineups(slate, matches, 1)
+        lineup_text = "  ".join(
+            f"{entry.slot.rstrip('123')} {entry.player.name}"
+            for entry in lineups[0].entries
+        )
+        zero_player = lineups[0].entries[0].player.name
+        output = io.StringIO(newline="")
+        writer = csv.writer(output)
+        writer.writerow((
+            "Rank", "EntryId", "EntryName", "Points", "Lineup", "",
+            "Player", "Roster Position", "%Drafted", "FPTS",
+        ))
+        writer.writerow((
+            1, "entry-1", "mine", 100, lineup_text, "",
+            zero_player, "QB", "10%", 0,
+        ))
+
+        review = review_contest_results(
+            output.getvalue().encode(), "results.csv", lineups,
+            slate.platform, slate.contest_format,
+        )
+
+        self.assertEqual(review.lineups[0].roster_slots, len(lineups[0].entries))
+        self.assertEqual(review.lineups[0].zero_point_players, (zero_player,))
 
     def test_rejects_non_results_csv(self) -> None:
         slate, matches = make_slate(Platform.FANDUEL)

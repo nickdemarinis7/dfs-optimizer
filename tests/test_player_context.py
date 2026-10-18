@@ -6,8 +6,12 @@ from datetime import datetime, timezone
 from dfs_optimizer.models import ContestFormat, Platform, Player, Position, Projection, Slate
 from dfs_optimizer.services.player_context import (
     PlayerContext,
+    import_player_context_csv,
     match_player_context,
+    player_context_csv_template,
     summarize_prelock_context,
+    verified_player_context_ids,
+    unverified_selected_player_ids,
 )
 from dfs_optimizer.services.risk import (
     suggest_default_excluded_player_ids,
@@ -16,6 +20,47 @@ from dfs_optimizer.services.risk import (
 
 
 class PlayerContextTests(unittest.TestCase):
+    def test_imports_manual_cfb_availability_and_depth_chart(self) -> None:
+        players = (
+            Player(
+                "qb1", "Starter One", Position.QB, (Position.QB,),
+                9000, "AAA", "BBB", "AAA@BBB",
+            ),
+            Player(
+                "qb2", "Backup Two", Position.QB, (Position.QB,),
+                5000, "AAA", "BBB", "AAA@BBB",
+            ),
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.CLASSIC, players, "test.csv"
+        )
+        contexts = import_player_context_csv(
+            slate,
+            b"name,team,status,depth_chart_position,active,practice_participation,verified_projection\n"
+            b"Starter One,AAA,QUESTIONABLE,1,true,LIMITED,18.5\n"
+            b"Backup Two,AAA,,2,true,,\n",
+        )
+        summary = summarize_prelock_context(slate, contexts)
+
+        self.assertEqual(len(contexts), 2)
+        self.assertIn("qb1", summary.questionable_player_ids)
+        self.assertIn("qb2", summary.backup_quarterback_ids)
+        self.assertEqual(contexts[0].verified_projection, 18.5)
+
+    def test_manual_context_rejects_unmatched_player(self) -> None:
+        with self.assertRaisesRegex(ValueError, "did not match"):
+            import_player_context_csv(
+                self.slate,
+                b"name,team,status\nNot A Player,DAL,OUT\n",
+            )
+
+    def test_context_template_contains_every_slate_player(self) -> None:
+        text = player_context_csv_template(self.slate).decode()
+
+        self.assertIn("name,team,status,depth_chart_position,active", text)
+        self.assertIn("Dak Prescott,DAL", text)
+        self.assertIn("Depth Receiver,DAL", text)
+
     def test_out_qb1_makes_active_qb2_replacement_not_backup(self) -> None:
         players = (
             Player(
@@ -171,6 +216,36 @@ class PlayerContextTests(unittest.TestCase):
         self.assertEqual(summary.unmatched_player_ids, frozenset({"wr"}))
         self.assertEqual(len(summary.games_starting_soon), 1)
         self.assertEqual(summary.timed_games, 1)
+
+    def test_blank_context_row_does_not_count_as_verified(self) -> None:
+        contexts = (
+            PlayerContext("blank", None, None, None, None),
+            PlayerContext("active", None, None, None, True),
+            PlayerContext("depth", 1, None, None, None),
+            PlayerContext("status", None, "QUESTIONABLE", None, None),
+            PlayerContext("manual", None, None, None, None, 12.5),
+        )
+
+        verified = verified_player_context_ids(contexts)
+
+        self.assertNotIn("blank", verified)
+        self.assertEqual(
+            verified, frozenset({"active", "depth", "status", "manual"})
+        )
+
+    def test_selected_players_require_context_or_individual_acknowledgement(self) -> None:
+        contexts = (
+            PlayerContext("verified", 1, None, None, True),
+            PlayerContext("blank", None, None, None, None),
+        )
+
+        unresolved = unverified_selected_player_ids(
+            {"verified", "blank", "checked", "missing"},
+            contexts,
+            {"checked"},
+        )
+
+        self.assertEqual(unresolved, frozenset({"blank", "missing"}))
 
 
 if __name__ == "__main__":

@@ -7,20 +7,36 @@ from .projections import (
     historical_data_coverage,
     historical_data_paths,
 )
-from .risk import suggest_default_excluded_player_ids, suggest_max_once_player_ids
+from .risk import (
+    suggest_default_excluded_player_ids,
+    suggest_max_once_player_ids,
+    suggest_player_exposure_limits,
+)
+from .confidence import apply_projection_confidence
 from .ownership import (
+    NFL_CLASSIC_OWNERSHIP_MODEL_VERSION,
     NFL_SHOWDOWN_OWNERSHIP_MODEL_VERSION,
+    estimate_nfl_classic_ownership,
+    estimate_nfl_ownership,
     estimate_nfl_showdown_ownership,
 )
+from .opportunity import OpportunityAssessment, apply_opportunity_risk
 from .role_adjustments import RoleAdjustment, apply_current_role_adjustments
 from .player_context import (
     PlayerContext,
     PrelockSummary,
     fetch_player_context,
+    import_player_context_csv,
     match_player_context,
+    player_context_csv_template,
     summarize_prelock_context,
+    verified_player_context_ids,
+    unverified_selected_player_ids,
 )
 from .results_review import (
+    WinnerStrategyBand,
+    WinnerStrategyReport,
+    analyze_winner_strategies,
     CapturedSubmission,
     ProvenancedEntry,
     ResultsReview,
@@ -35,6 +51,7 @@ from .portfolio import PortfolioDiagnostics, analyze_portfolio
 from .preflight import PreflightReport, preflight_lineups
 from .audit import AuditFinding, audit_lineups
 from .run_archive import build_run_archive, save_run_archive
+from .run_replay import ArchiveReplayReport, replay_run_archive
 from .run_history import (
     RunComparison,
     RunRecord,
@@ -60,25 +77,41 @@ __all__ = [
     "apply_uploaded_ownership",
     "apply_cfb_game_lines",
     "cfb_consensus_lines_csv",
+    "cfb_projection_input_snapshot",
     "build_historical_projections",
     "build_cfb_projections",
     "build_cfb_projections_from_file",
     "estimate_cfb_ownership",
+    "restore_verified_cfb_starters",
+    "estimate_nfl_ownership",
+    "estimate_nfl_classic_ownership",
     "estimate_nfl_showdown_ownership",
+    "NFL_CLASSIC_OWNERSHIP_MODEL_VERSION",
     "NFL_SHOWDOWN_OWNERSHIP_MODEL_VERSION",
+    "OpportunityAssessment",
+    "apply_opportunity_risk",
     "infer_cfb_season",
     "infer_cfb_week",
     "infer_cfb_team_names_from_file",
     "suggest_max_once_player_ids",
+    "suggest_player_exposure_limits",
     "suggest_default_excluded_player_ids",
+    "apply_projection_confidence",
     "RoleAdjustment",
     "apply_current_role_adjustments",
     "PlayerContext",
     "PrelockSummary",
     "fetch_player_context",
+    "import_player_context_csv",
     "match_player_context",
+    "player_context_csv_template",
     "summarize_prelock_context",
+    "verified_player_context_ids",
+    "unverified_selected_player_ids",
     "ResultsReview",
+    "WinnerStrategyBand",
+    "WinnerStrategyReport",
+    "analyze_winner_strategies",
     "CapturedSubmission",
     "ReviewedLineup",
     "SavedPortfolio",
@@ -89,6 +122,8 @@ __all__ = [
     "review_contest_results",
     "build_run_archive",
     "save_run_archive",
+    "ArchiveReplayReport",
+    "replay_run_archive",
     "RunComparison",
     "RunRecord",
     "compare_runs",
@@ -112,8 +147,10 @@ from .cfb_projections import (
     build_cfb_projections,
     build_cfb_projections_from_file,
     cfb_consensus_lines_csv,
+    cfb_projection_input_snapshot,
     estimate_cfb_ownership,
     infer_cfb_season,
     infer_cfb_week,
     infer_cfb_team_names_from_file,
+    restore_verified_cfb_starters,
 )

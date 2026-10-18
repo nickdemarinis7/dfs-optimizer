@@ -20,10 +20,12 @@ def add_historical_ranges(
     target_season: int,
     target_week: int,
     games_used: int = 8,
+    snap_files: tuple[str | Path, ...] = (),
 ) -> tuple[Projection, ...]:
     """Add empirical outcome distributions using only games before the target."""
     scoring = nfl_scoring_for(slate.platform)
     offense = defaultdict(list)
+    offense_rows = defaultdict(list)
     for row in _rows(player_files):
         if row.get("season_type") != "REG" or not _before(row, target_season, target_week):
             continue
@@ -45,6 +47,15 @@ def add_historical_ranges(
         offense[_normalize(row.get("player_display_name", ""))].append(
             ((int(row["season"]), int(row["week"])), scoring.score_offense(stats))
         )
+        offense_rows[_normalize(row.get("player_display_name", ""))].append(row)
+
+    snap_rows = defaultdict(list)
+    for row in _rows(snap_files):
+        if (
+            row.get("game_type") == "REG"
+            and _before(row, target_season, target_week)
+        ):
+            snap_rows[(_normalize(row.get("player", "")), row.get("team", ""))].append(row)
 
     games = _rows((games_file,))
     points_allowed = {}
@@ -83,11 +94,46 @@ def add_historical_ranges(
         player = players.get(projection.platform_id or "")
         history = defenses.get(player.team, []) if player and player.primary_position == Position.DST else offense.get(_normalize(projection.name), [])
         scores = [score for _, score in sorted(history, reverse=True)[:games_used]]
+        usage_rows = sorted(
+            (
+                row for row in offense_rows.get(_normalize(projection.name), ())
+                if int(row.get("season") or 0) == target_season
+            ),
+            key=lambda row: int(row.get("week") or 0),
+            reverse=True,
+        )[:games_used]
+        opportunities = [
+            _opportunities(player.primary_position, row) for row in usage_rows
+        ] if player is not None else []
+        opportunity_retention = _recent_retention(opportunities)
+        player_snaps = sorted(
+            snap_rows.get((_normalize(projection.name), player.team), ())
+            if player is not None else (),
+            key=lambda row: int(row.get("week") or 0),
+            reverse=True,
+        )[:games_used]
+        snap_retention = _recent_retention([
+            _number(row, "offense_pct") for row in player_snaps
+        ])
+        stability_signals = [
+            value for value in (opportunity_retention, snap_retention)
+            if value is not None
+        ]
+        opportunity_stability = min(stability_signals) if stability_signals else None
+        latest_week = max(
+            (int(row.get("week") or 0) for row in usage_rows), default=0
+        )
+        metadata = {
+            "sample_size": len(scores),
+            "opportunity_stability": opportunity_stability,
+            "data_age_periods": max(0, target_week - 1 - latest_week) if latest_week else None,
+        }
         if not scores:
             point = projection.projected_points
             enriched.append(replace(
                 projection, floor=point, ceiling=point,
                 p10=point, p25=point, p75=point, p90=point,
+                **metadata,
             ))
             continue
         historical_mean = sum(scores) / len(scores)
@@ -114,6 +160,7 @@ def add_historical_ranges(
             p75=p75,
             p90=p90,
             bust_probability=bust_probability,
+            **metadata,
         ))
     return tuple(enriched)
 
@@ -133,6 +180,25 @@ def _before(row, season, week):
 def _number(row, column):
     value = row.get(column, "")
     return float(value) if value not in (None, "") else 0.0
+
+
+def _opportunities(position: Position, row) -> float:
+    if position == Position.QB:
+        return _number(row, "attempts") + _number(row, "carries")
+    if position == Position.K:
+        return _number(row, "fg_att") + _number(row, "pat_att")
+    return _number(row, "carries") + _number(row, "targets")
+
+
+def _recent_retention(values: list[float]) -> float | None:
+    if len(values) < 3:
+        return None
+    recent = values[:2]
+    prior = [value for value in values[2:] if value > 0]
+    if not prior:
+        return None
+    prior_average = sum(prior) / len(prior)
+    return min(1.0, max(0.0, (sum(recent) / len(recent)) / prior_average))
 
 
 def _normalize(value):

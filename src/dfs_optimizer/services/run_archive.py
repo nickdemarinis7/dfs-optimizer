@@ -22,6 +22,7 @@ def build_run_archive(
     run_label: str | None = None,
     created_at: datetime | None = None,
     projection_built_at: datetime | None = None,
+    input_snapshots: dict[str, bytes] | None = None,
 ) -> bytes:
     created = created_at or datetime.now(timezone.utc)
     slate_id = hashlib.sha256(
@@ -32,6 +33,31 @@ def build_run_archive(
             *sorted(slate.games),
         )).encode()
     ).hexdigest()[:16]
+    lineup_content = lineups_csv_text(lineups, slate.platform).encode()
+    projection_output = io.StringIO(newline="")
+    writer = csv.writer(projection_output)
+    writer.writerow((
+        "name", "team", "platform_id", "projected_points", "floor", "ceiling",
+        "projected_ownership", "p10", "p25", "p75", "p90", "bust_probability",
+        "sample_size", "opportunity_stability", "data_age_periods",
+        "confidence_score", "confidence_tier", "confidence_reasons",
+    ))
+    for item in projections:
+        writer.writerow((
+            item.name, item.team, item.platform_id or "", item.projected_points,
+            item.floor, item.ceiling, item.projected_ownership,
+            item.p10, item.p25, item.p75, item.p90, item.bust_probability,
+            item.sample_size, item.opportunity_stability, item.data_age_periods,
+            item.confidence_score, item.confidence_tier,
+            json.dumps(item.confidence_reasons),
+        ))
+    projection_content = projection_output.getvalue().encode()
+    artifact_content = {
+        "lineups.csv": lineup_content,
+        "projections.csv": projection_content,
+    }
+    if salary_content is not None:
+        artifact_content[f"salary/{Path(slate.source_name).name}"] = salary_content
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
         manifest = {
@@ -49,24 +75,31 @@ def build_run_archive(
             "projection_count": len(projections),
             "lineup_count": len(lineups),
             "settings": settings,
+            "artifacts": {
+                name: {
+                    "bytes": len(content),
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                }
+                for name, content in artifact_content.items()
+            },
+            "input_snapshots": {
+                name: {
+                    "bytes": len(content),
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                }
+                for name, content in (input_snapshots or {}).items()
+            },
         }
         archive.writestr("manifest.json", json.dumps(manifest, indent=2) + "\n")
         if salary_content is not None:
             archive.writestr(f"salary/{Path(slate.source_name).name}", salary_content)
-        archive.writestr("lineups.csv", lineups_csv_text(lineups, slate.platform))
-        projection_output = io.StringIO(newline="")
-        writer = csv.writer(projection_output)
-        writer.writerow((
-            "name", "team", "platform_id", "projected_points", "floor", "ceiling",
-            "projected_ownership", "p10", "p25", "p75", "p90", "bust_probability",
-        ))
-        for item in projections:
-            writer.writerow((
-                item.name, item.team, item.platform_id or "", item.projected_points,
-                item.floor, item.ceiling, item.projected_ownership,
-                item.p10, item.p25, item.p75, item.p90, item.bust_probability,
-            ))
-        archive.writestr("projections.csv", projection_output.getvalue())
+        archive.writestr("lineups.csv", lineup_content)
+        archive.writestr("projections.csv", projection_content)
+        for name, content in (input_snapshots or {}).items():
+            safe_name = Path(name).name
+            if not safe_name or safe_name != name:
+                raise ValueError("input snapshot names must be plain filenames")
+            archive.writestr(f"inputs/{safe_name}", content)
     return output.getvalue()
 
 

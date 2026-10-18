@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import csv
+import io
 import re
 import unicodedata
 from zoneinfo import ZoneInfo
@@ -20,6 +22,7 @@ class PlayerContext:
     injury_status: str | None
     practice_participation: str | None
     active: bool | None
+    verified_projection: float | None = None
 
     @property
     def role_label(self) -> str:
@@ -43,6 +46,38 @@ class PrelockSummary:
     total_games: int
 
 
+def verified_player_context_ids(
+    contexts: tuple[PlayerContext, ...],
+) -> frozenset[str]:
+    """Return players whose context row contains an actual pre-lock signal.
+
+    A name/team match with every optional field blank is not verification. This
+    prevents a blank bulk upload from reporting full context coverage.
+    """
+    return frozenset(
+        item.platform_id
+        for item in contexts
+        if item.active is not None
+        or item.depth_chart_position is not None
+        or bool((item.injury_status or "").strip())
+        or bool((item.practice_participation or "").strip())
+        or item.verified_projection is not None
+    )
+
+
+def unverified_selected_player_ids(
+    selected_player_ids,
+    contexts: tuple[PlayerContext, ...],
+    acknowledged_player_ids=frozenset(),
+) -> frozenset[str]:
+    """Return selected players lacking context and an explicit manual check."""
+    return (
+        frozenset(selected_player_ids)
+        - verified_player_context_ids(contexts)
+        - frozenset(acknowledged_player_ids)
+    )
+
+
 def fetch_player_context(
     slate: Slate,
     cache_dir: str = "data/cache",
@@ -56,6 +91,111 @@ def fetch_player_context(
             cache_dir, refresh=refresh, max_age_hours=max_age_hours
         ),
     )
+
+
+def import_player_context_csv(
+    slate: Slate, content: bytes | str
+) -> tuple[PlayerContext, ...]:
+    """Import a pre-lock availability/depth-chart snapshot.
+
+    Required columns are ``name`` and ``team``. Optional columns are
+    ``status``, ``depth_chart_position``, ``active``, and
+    ``practice_participation`` and ``verified_projection``. Rows must match exactly one slate player so a
+    similarly named player cannot silently receive somebody else's status.
+    """
+    text = content.decode("utf-8-sig") if isinstance(content, bytes) else content
+    reader = csv.DictReader(io.StringIO(text))
+    fields = {field.strip().casefold() for field in (reader.fieldnames or ())}
+    missing = {"name", "team"} - fields
+    if missing:
+        raise ValueError(
+            "player-context CSV is missing columns: " + ", ".join(sorted(missing))
+        )
+    players_by_key: dict[tuple[str, str], list] = {}
+    for player in slate.players:
+        players_by_key.setdefault(
+            (_normalize(player.name), player.team.strip().upper()), []
+        ).append(player)
+
+    contexts = []
+    seen_ids: set[str] = set()
+    unmatched: list[str] = []
+    for row_number, raw_row in enumerate(reader, start=2):
+        row = {
+            str(key).strip().casefold(): value
+            for key, value in raw_row.items() if key is not None
+        }
+        name = _text(row.get("name"))
+        team = (_text(row.get("team")) or "").upper()
+        if not name or not team:
+            raise ValueError(f"player-context row {row_number} needs name and team")
+        candidates = players_by_key.get((_normalize(name), team), ())
+        if len(candidates) != 1:
+            unmatched.append(f"{name} ({team})")
+            continue
+        player = candidates[0]
+        if player.platform_id in seen_ids:
+            raise ValueError(f"player-context CSV contains duplicate player {name}")
+        seen_ids.add(player.platform_id)
+        depth_text = _text(row.get("depth_chart_position"))
+        try:
+            depth = int(depth_text) if depth_text else None
+        except ValueError as exc:
+            raise ValueError(
+                f"player-context row {row_number} has an invalid depth position"
+            ) from exc
+        if depth is not None and depth < 1:
+            raise ValueError(
+                f"player-context row {row_number} depth position must be at least 1"
+            )
+        active = _optional_bool(row.get("active"), row_number)
+        projection_text = _text(row.get("verified_projection"))
+        try:
+            verified_projection = (
+                float(projection_text) if projection_text else None
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"player-context row {row_number} has an invalid verified projection"
+            ) from exc
+        if verified_projection is not None and verified_projection <= 0:
+            raise ValueError(
+                f"player-context row {row_number} verified projection must be positive"
+            )
+        contexts.append(PlayerContext(
+            platform_id=player.platform_id,
+            depth_chart_position=depth,
+            injury_status=_text(row.get("status")),
+            practice_participation=_text(row.get("practice_participation")),
+            active=active,
+            verified_projection=verified_projection,
+        ))
+    if unmatched:
+        preview = ", ".join(unmatched[:5])
+        remainder = len(unmatched) - 5
+        raise ValueError(
+            "player-context rows did not match the slate: " + preview
+            + (f" and {remainder} more" if remainder > 0 else "")
+        )
+    if not contexts:
+        raise ValueError("player-context CSV did not contain any matched players")
+    return tuple(contexts)
+
+
+def player_context_csv_template(slate: Slate) -> bytes:
+    """Return an editable pre-lock context template for the current slate."""
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow((
+        "name", "team", "status", "depth_chart_position", "active",
+        "practice_participation",
+        "verified_projection",
+    ))
+    for player in sorted(slate.players, key=lambda item: (item.team, item.name)):
+        writer.writerow((
+            player.name, player.team, player.status or "", "", "", "", "",
+        ))
+    return output.getvalue().encode()
 
 
 def summarize_prelock_context(
@@ -210,6 +350,19 @@ def _normalize(value: str) -> str:
 def _text(value) -> str | None:
     text = str(value).strip() if value is not None else ""
     return text or None
+
+
+def _optional_bool(value, row_number: int) -> bool | None:
+    text = (_text(value) or "").casefold()
+    if not text:
+        return None
+    if text in {"true", "yes", "y", "1", "active", "available"}:
+        return True
+    if text in {"false", "no", "n", "0", "inactive", "unavailable"}:
+        return False
+    raise ValueError(
+        f"player-context row {row_number} active must be true, false, or blank"
+    )
 
 
 def _game_start(value: str) -> datetime | None:

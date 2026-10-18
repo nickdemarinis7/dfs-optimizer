@@ -75,6 +75,33 @@ def make_slate(platform: Platform) -> tuple[Slate, ProjectionMatchResult]:
 
 
 class ClassicOptimizerTests(unittest.TestCase):
+    def test_scales_player_specific_exposure_cap_with_portfolio_size(self) -> None:
+        slate, matches = make_slate(Platform.DRAFTKINGS)
+        settings = ClassicOptimizationSettings(
+            player_exposure_limits=(("wr1", .50),)
+        )
+
+        for count, expected_maximum in ((3, 1), (10, 5), (20, 10)):
+            with self.subTest(count=count):
+                lineups = generate_classic_lineups(
+                    slate,
+                    matches,
+                    count=count,
+                    minimum_unique_players=1,
+                    settings=settings,
+                )
+                appearances = sum(
+                    entry.player.platform_id == "wr1"
+                    for lineup in lineups
+                    for entry in lineup.entries
+                )
+                self.assertEqual(len(lineups), count)
+                self.assertLessEqual(appearances, expected_maximum)
+
+    def test_rejects_invalid_player_specific_exposure_cap(self) -> None:
+        with self.assertRaisesRegex(ValueError, "player exposure limits"):
+            ClassicOptimizationSettings(player_exposure_limits=(("wr1", 0),))
+
     def test_limits_fragile_players_per_lineup(self) -> None:
         slate, matches = make_slate(Platform.DRAFTKINGS)
         fragile_ids = frozenset({"rb1", "wr1", "te1"})

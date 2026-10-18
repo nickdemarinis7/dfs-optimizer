@@ -25,14 +25,17 @@ def apply_current_role_adjustments(
     projections: tuple[Projection, ...],
     contexts: tuple[PlayerContext, ...],
 ) -> tuple[tuple[Projection, ...], tuple[RoleAdjustment, ...]]:
-    """Apply conservative depth-chart penalties behind healthy starters.
+    """Apply evidence-backed role changes behind healthy starters.
 
     Historical usage remains the primary projection. This layer handles the
     pre-lock facts that a temporary starter may now sit behind a healthy player
     and that a replacement quarterback's relief appearances may understate a
-    confirmed start. Skill-player penalties intentionally target only TE2+,
-    RB3+, and WR4+ roles. An NFL WR3 is frequently a starting slot receiver,
-    so depth order alone is not enough evidence to reduce that projection.
+    confirmed start. Depth order alone is too noisy to lower a skill player's
+    median: multi-TE packages, slot receivers, and committee backs can all be
+    productive below the first row of a depth chart. A TE2+, RB3+, or WR4+
+    median is reduced only when recent opportunity or snap evidence also shows
+    a material role decline. The risk layer may still flag and cap exposure to
+    a deep player whose median is left unchanged here.
     """
     if slate.sport != Sport.NFL or not contexts:
         return projections, ()
@@ -89,19 +92,20 @@ def apply_current_role_adjustments(
         depth = context.depth_chart_position or 0
         if (player.team, player.primary_position) not in healthy_leaders:
             continue
-        if player.primary_position == Position.TE and depth >= 2:
-            factors[player.platform_id] = (
-                .65,
-                "TE2 or deeper behind an active TE1",
-                depth,
-            )
-        elif (
+        deep_skill_role = player.primary_position == Position.TE and depth >= 2
+        deep_skill_role = deep_skill_role or (
             player.primary_position == Position.RB and depth >= 3
             or player.primary_position == Position.WR and depth >= 4
-        ):
+        )
+        stability = projection.opportunity_stability
+        if deep_skill_role and stability is not None and stability < .60:
+            factor = .75 if stability < .35 else .85
             factors[player.platform_id] = (
-                .75,
-                f"{player.primary_position.value}{depth} behind an active starter",
+                factor,
+                (
+                    f"{player.primary_position.value}{depth} behind an active starter "
+                    f"with confirmed recent opportunity decline ({stability:.0%} retained)"
+                ),
                 depth,
             )
 

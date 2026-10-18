@@ -5,7 +5,10 @@ import unittest
 
 from dfs_optimizer.importers import import_salary_csv
 from dfs_optimizer.models import ContestFormat, Platform, Player, Position, Projection, Slate, Sport
-from dfs_optimizer.services import suggest_max_once_player_ids
+from dfs_optimizer.services import (
+    suggest_max_once_player_ids,
+    suggest_player_exposure_limits,
+)
 from dfs_optimizer.services.player_context import PlayerContext
 from dfs_optimizer.services.risk import suggest_default_excluded_player_ids
 
@@ -14,6 +17,80 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PortfolioRiskTests(unittest.TestCase):
+    def test_nfl_fragile_opportunity_receives_strict_exposure_cap(self) -> None:
+        player = Player(
+            "volatile", "Volatile NFL Receiver", Position.WR,
+            (Position.WR, Position.FLEX), 5000, "BUF", "NE", "BUF@NE",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.CLASSIC, (player,), "test",
+            Sport.NFL,
+        )
+        projection = Projection(
+            player.name, player.team, 14, platform_id=player.platform_id,
+            floor=1, bust_probability=.65, confidence_score=30,
+            confidence_tier="Low",
+        )
+
+        self.assertEqual(
+            suggest_player_exposure_limits(slate, (projection,)),
+            {player.platform_id: .34},
+        )
+
+    def test_cfb_risk_caps_distinguish_moderate_and_severe_volatility(self) -> None:
+        players = (
+            Player("moderate", "Moderate", Position.WR, (Position.WR, Position.FLEX), 7000, "AAA", "BBB", "AAA@BBB"),
+            Player("severe", "Severe", Position.RB, (Position.RB, Position.FLEX), 6000, "BBB", "AAA", "AAA@BBB"),
+            Player("stable", "Stable", Position.WR, (Position.WR, Position.FLEX), 8000, "AAA", "BBB", "AAA@BBB"),
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.CLASSIC, players, "test", Sport.CFB
+        )
+        projections = (
+            Projection("Moderate", "AAA", 20, platform_id="moderate", floor=8, bust_probability=.45),
+            Projection("Severe", "BBB", 16, platform_id="severe", floor=2, bust_probability=.60),
+            Projection("Stable", "AAA", 21, platform_id="stable", floor=10, bust_probability=.15),
+        )
+
+        limits = suggest_player_exposure_limits(slate, projections)
+
+        self.assertEqual(limits["moderate"], .50)
+        self.assertEqual(limits["severe"], .34)
+        self.assertNotIn("stable", limits)
+
+    def test_verified_new_cfb_starter_receives_conservative_cap(self) -> None:
+        player = Player(
+            "new", "New Starter", Position.WR, (Position.WR, Position.FLEX),
+            5000, "AAA", "BBB", "AAA@BBB",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.CLASSIC, (player,), "test", Sport.CFB
+        )
+        projection = Projection("New Starter", "AAA", 12, platform_id="new", floor=6)
+        context = PlayerContext("new", 1, None, None, True, 12)
+
+        limits = suggest_player_exposure_limits(slate, (projection,), (context,))
+
+        self.assertEqual(limits["new"], .34)
+
+    def test_low_confidence_player_receives_strict_exposure_cap(self) -> None:
+        player = Player(
+            "uncertain", "Uncertain Receiver", Position.WR,
+            (Position.WR, Position.FLEX), 5000, "AAA", "BBB", "AAA@BBB",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.CLASSIC, (player,), "test", Sport.CFB
+        )
+        projection = Projection(
+            player.name, player.team, 14, platform_id=player.platform_id,
+            floor=7, bust_probability=.20, confidence_score=35,
+            confidence_tier="Low",
+        )
+
+        limits = suggest_player_exposure_limits(slate, (projection,))
+
+        self.assertEqual(limits[player.platform_id], .25)
+
     def test_excludes_extreme_zero_floor_showdown_punt_by_default(self) -> None:
         player = Player(
             "punt", "Zero Floor Receiver", Position.WR,
@@ -140,6 +217,22 @@ class PortfolioRiskTests(unittest.TestCase):
             Projection(
                 player.name, player.team, 11, platform_id=player.platform_id,
                 floor=2, ceiling=25, bust_probability=.5,
+            ),
+        ))
+        self.assertIn(player.platform_id, suggestions)
+
+    def test_cfb_expensive_high_bust_player_is_suggested_max_once(self) -> None:
+        player = Player(
+            "volatile", "Volatile Star", Position.RB,
+            (Position.RB, Position.FLEX), 9000, "AAA", "BBB", "AAA@BBB",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.CLASSIC, (player,), "test", Sport.CFB
+        )
+        suggestions = suggest_max_once_player_ids(slate, (
+            Projection(
+                player.name, player.team, 40, platform_id=player.platform_id,
+                floor=20, ceiling=55, bust_probability=.45,
             ),
         ))
         self.assertIn(player.platform_id, suggestions)

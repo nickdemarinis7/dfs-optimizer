@@ -11,6 +11,7 @@ from dfs_optimizer.services.run_history import (
     restore_run,
     update_run_label,
 )
+from dfs_optimizer.services.run_replay import replay_run_archive
 
 
 slate = st.session_state.get("slate")
@@ -81,6 +82,82 @@ with st.container(border=True):
         icon=":material/download:",
         width="stretch",
     )
+    if st.button(
+        "Verify and replay archive",
+        icon=":material/replay:",
+        width="stretch",
+        key=f"replay-{selected.run_id}",
+    ):
+        try:
+            with st.spinner("Verifying hashes and rebuilding the run…"):
+                replay_report = replay_run_archive(selected.path)
+            st.session_state["archive_replay"] = (
+                selected.run_id, replay_report
+            )
+        except (KeyError, OSError, ValueError) as exc:
+            st.error(f"Could not inspect this archive: {exc}")
+    replay_state = st.session_state.get("archive_replay")
+    if replay_state and replay_state[0] == selected.run_id:
+        report = replay_state[1]
+        if not report.integrity_ok:
+            st.error(
+                "Archive integrity failed: " + "; ".join(report.integrity_errors),
+                icon=":material/broken_image:",
+            )
+        elif not report.reconstructable:
+            st.info(
+                "Archive hashes are valid, but full replay is unavailable: "
+                + (report.reason or "unsupported archive"),
+                icon=":material/verified:",
+            )
+        else:
+            replay_metrics = st.columns(4)
+            replay_metrics[0].metric(
+                "Model version",
+                "Match" if report.model_version_match else "Changed",
+            )
+            replay_metrics[1].metric(
+                "Projection changes", report.changed_projection_count
+            )
+            replay_metrics[2].metric(
+                "Maximum delta", f"{report.maximum_projection_delta:.3f}"
+            )
+            replay_metrics[3].metric(
+                "Exact lineups",
+                f"{report.exact_lineup_matches}/{report.archived_lineup_count}",
+            )
+            if report.changed_confidence_count:
+                st.caption(
+                    f"Confidence changed for {report.changed_confidence_count} players · "
+                    f"maximum score delta {report.maximum_confidence_delta:.1f}"
+                )
+            if (
+                report.integrity_ok and report.model_version_match
+                and report.projections_match and report.lineups_match
+            ):
+                st.success(
+                    "The archive is intact and the projections and lineups reproduced exactly.",
+                    icon=":material/verified:",
+                )
+            else:
+                details = []
+                if not report.model_version_match:
+                    details.append(
+                        f"model {report.archived_model_version or 'unknown'} → "
+                        f"{report.current_model_version or 'unknown'}"
+                    )
+                if report.missing_projection_ids:
+                    details.append(
+                        f"{len(report.missing_projection_ids)} archived players missing"
+                    )
+                if report.unexpected_projection_ids:
+                    details.append(
+                        f"{len(report.unexpected_projection_ids)} new players"
+                    )
+                st.warning(
+                    "Replay drift detected" + (": " + "; ".join(details) if details else "."),
+                    icon=":material/change_circle:",
+                )
     if st.button("Open this run", icon=":material/restore:", width="stretch"):
         try:
             loaded_slate, projections, lineups, salary_content, settings = restore_run(selected)

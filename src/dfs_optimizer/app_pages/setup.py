@@ -48,6 +48,7 @@ from dfs_optimizer.services.cfb_projections import (
     apply_cfb_game_lines,
     build_cfb_projections,
     cfb_consensus_lines_csv,
+    cfb_projection_input_snapshot,
     estimate_cfb_ownership,
     infer_cfb_season,
     infer_cfb_week,
@@ -137,11 +138,15 @@ if st.button("Change salary file", icon=":material/swap_horiz:"):
     for key in (
         "slate", "source_name", "salary_content", "salary_loaded_at", "salary-upload",
         "projections", "base_projections", "role_adjustments", "projection_key",
+        "ownership_content", "ownership_name", "ownership_hash",
         "projection_built_at", "historical_data_health", "player_context",
         "player_context_error", "player_context_built_at", "player_context_attempted",
-        "ownership_hash", "lineups",
+        "lineups",
         "cfb_game_environments", "cfb_lines_hash", "cfb_lines_name", "cfb_target_week",
         "cfb_odds_warning",
+        "cfb_lines_content", "projection_input_snapshot",
+        "projection_input_snapshot_name", "cfb_player_context_hash",
+        "player_context_source",
         "lineup_config_key", "run_archive", "run_archive_name", "saved_run_path",
         "current_run_id",
         "generation_warning",
@@ -195,7 +200,8 @@ if slate.sport == Sport.CFB:
         )
         st.caption(
             "Current-season play data: cfbfastR / SportsDataverse. "
-            "Players without a reliable match keep the platform baseline."
+            "Players without verified current-season usage are removed unless "
+            "you explicitly verify a new starter and provide a projection."
         )
     with st.container(border=True):
         section_intro(
@@ -304,6 +310,16 @@ if slate.sport == Sport.CFB:
             st.session_state["projection_key"] = projection_key
             st.session_state["projection_built_at"] = datetime.now(timezone.utc)
             st.session_state["cfb_target_week"] = target_week
+            stats_source = download_cfb_player_stats(
+                season, "data/cache/cfb"
+            )
+            st.session_state["projection_input_snapshot"] = (
+                cfb_projection_input_snapshot(slate, stats_source, target_week)
+            )
+            st.session_state["projection_input_snapshot_name"] = (
+                f"cfb-{season}-through-week-{target_week - 1}.csv"
+            )
+            st.session_state["cfb_lines_content"] = lines_content
             st.switch_page("app_pages/build.py")
         except (OSError, ValueError) as exc:
             st.error(f"Could not build the CFB forecast: {exc}")

@@ -246,7 +246,8 @@ def generate_single_game_3max_portfolio(
         - sum(cost * 100 * variable for cost, variable in pair_penalties)
     )
     solver = cp_model.CpSolver()
-    solver.parameters.num_search_workers = 8
+    solver.parameters.num_search_workers = 1
+    solver.parameters.random_seed = 0
     solver.parameters.max_time_in_seconds = 15
     status = solver.solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -367,7 +368,8 @@ def _optimize_single_game_lineup(slate: Slate, projection_matches: ProjectionMat
         )
     model.maximize(sum(round(objective_points(p) * rules.multiplier * scale) * multiplier[i] + round(objective_points(p) * scale) * flex[i] for i, p in enumerate(players)))
     solver = cp_model.CpSolver()
-    solver.parameters.num_search_workers = 8
+    solver.parameters.num_search_workers = 1
+    solver.parameters.random_seed = 0
     solver.parameters.max_time_in_seconds = 15
     status = solver.solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
