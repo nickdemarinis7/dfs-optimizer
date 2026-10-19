@@ -4,15 +4,24 @@ import tempfile
 
 import streamlit as st
 
-from dfs_optimizer.app_ui import apply_app_style
-
-
 st.set_page_config(
     page_title="Lineup Studio",
     page_icon=":material/sports_football:",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
+
+# Streamlit can preserve browser-session objects while a deployment hot-reloads
+# new dataclass definitions. Clear that incompatible state whenever the schema
+# changes instead of letting old Projection or PlayerContext instances reach
+# the new page code.
+APP_STATE_SCHEMA_VERSION = 2
+if st.session_state.get("_app_state_schema_version") != APP_STATE_SCHEMA_VERSION:
+    st.session_state.clear()
+    st.session_state["_app_state_schema_version"] = APP_STATE_SCHEMA_VERSION
+
+from dfs_optimizer.app_ui import apply_app_style
+
 
 apply_app_style()
 
