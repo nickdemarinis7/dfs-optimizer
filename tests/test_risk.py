@@ -37,6 +37,27 @@ class PortfolioRiskTests(unittest.TestCase):
             {player.platform_id: .34},
         )
 
+    def test_nfl_one_game_sample_is_capped_to_one_of_three(self) -> None:
+        player = Player(
+            "small", "Small Sample Back", Position.RB,
+            (Position.RB, Position.FLEX), 3000, "GB", "DAL", "DAL@GB",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.CLASSIC, (player,), "test",
+            Sport.NFL,
+        )
+        projection = Projection(
+            player.name, player.team, 2.6, platform_id=player.platform_id,
+            floor=2.6, ceiling=2.6, bust_probability=0, sample_size=1,
+        )
+
+        limits = suggest_player_exposure_limits(
+            slate, (projection,),
+            (PlayerContext("small", 2, None, None, True),),
+        )
+
+        self.assertEqual(limits[player.platform_id], .50)
+
     def test_cfb_risk_caps_distinguish_moderate_and_severe_volatility(self) -> None:
         players = (
             Player("moderate", "Moderate", Position.WR, (Position.WR, Position.FLEX), 7000, "AAA", "BBB", "AAA@BBB"),

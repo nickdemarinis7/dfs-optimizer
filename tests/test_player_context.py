@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from dfs_optimizer.models import ContestFormat, Platform, Player, Position, Projection, Slate
 from dfs_optimizer.services.player_context import (
     PlayerContext,
     import_player_context_csv,
+    match_nflverse_player_context,
     match_player_context,
+    merge_player_context_sources,
     player_context_csv_template,
     summarize_prelock_context,
     verified_player_context_ids,
@@ -36,9 +40,9 @@ class PlayerContextTests(unittest.TestCase):
         )
         contexts = import_player_context_csv(
             slate,
-            b"name,team,status,depth_chart_position,active,practice_participation,verified_projection\n"
-            b"Starter One,AAA,QUESTIONABLE,1,true,LIMITED,18.5\n"
-            b"Backup Two,AAA,,2,true,,\n",
+            b"name,team,status,depth_chart_position,active,practice_participation,verified_projection,expected_role,role_note\n"
+            b"Starter One,AAA,QUESTIONABLE,1,true,LIMITED,18.5,expanded,expected full workload\n"
+            b"Backup Two,AAA,,2,true,,,,\n",
         )
         summary = summarize_prelock_context(slate, contexts)
 
@@ -46,6 +50,8 @@ class PlayerContextTests(unittest.TestCase):
         self.assertIn("qb1", summary.questionable_player_ids)
         self.assertIn("qb2", summary.backup_quarterback_ids)
         self.assertEqual(contexts[0].verified_projection, 18.5)
+        self.assertEqual(contexts[0].expected_role, "expanded")
+        self.assertEqual(contexts[0].role_note, "expected full workload")
 
     def test_manual_context_rejects_unmatched_player(self) -> None:
         with self.assertRaisesRegex(ValueError, "did not match"):
@@ -133,6 +139,60 @@ class PlayerContextTests(unittest.TestCase):
         by_id = {item.platform_id: item for item in contexts}
         self.assertEqual(by_id["joe"].depth_chart_position, 3)
         self.assertEqual(by_id["wr"].injury_status, "Questionable")
+
+    def test_matches_latest_nflverse_depth_and_injury_records(self) -> None:
+        with TemporaryDirectory() as directory:
+            depth_path = Path(directory) / "depth.csv"
+            injury_path = Path(directory) / "injuries.csv"
+            depth_path.write_text(
+                "dt,team,player_name,pos_rank\n"
+                "2026-10-01,DAL,Dak Prescott,2\n"
+                "2026-10-18,DAL,Dak Prescott,1\n"
+                "2026-10-18,DAL,Joe Milton III,3\n",
+                encoding="utf-8",
+            )
+            injury_path.write_text(
+                "team,week,full_name,date_modified,report_status,practice_status\n"
+                "DAL,6,Dak Prescott,2026-10-10,Questionable,Limited Participation\n"
+                "DAL,7,Dak Prescott,2026-10-18,,Full Participation\n",
+                encoding="utf-8",
+            )
+
+            contexts = match_nflverse_player_context(
+                self.slate, depth_path, injury_path
+            )
+
+        by_id = {item.platform_id: item for item in contexts}
+        self.assertEqual(by_id["dak"].depth_chart_position, 1)
+        self.assertIsNone(by_id["dak"].injury_status)
+        self.assertEqual(
+            by_id["dak"].practice_participation, "Full Participation"
+        )
+        self.assertEqual(by_id["joe"].depth_chart_position, 3)
+
+    def test_nflverse_merge_preserves_manual_role_report(self) -> None:
+        primary = (
+            PlayerContext(
+                "dak", 2, "Questionable", None, True, 21.0,
+                "expanded", "late workload report",
+            ),
+        )
+        secondary = (
+            PlayerContext(
+                "dak", 1, None, "Full Participation", None,
+                injury_reported=True,
+            ),
+        )
+
+        merged = merge_player_context_sources(primary, secondary)
+
+        self.assertEqual(merged[0].depth_chart_position, 1)
+        self.assertIsNone(merged[0].injury_status)
+        self.assertEqual(merged[0].practice_participation, "Full Participation")
+        self.assertTrue(merged[0].active)
+        self.assertEqual(merged[0].verified_projection, 21.0)
+        self.assertEqual(merged[0].expected_role, "expanded")
+        self.assertEqual(merged[0].role_note, "late workload report")
 
     def test_uses_sleeper_depth_chart_order_instead_of_position_label(self) -> None:
         contexts = match_player_context(self.slate, {

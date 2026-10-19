@@ -12,6 +12,14 @@ SNAP_COUNTS_URL = (
     "https://github.com/nflverse/nflverse-data/releases/download/"
     "snap_counts/snap_counts_{season}.csv"
 )
+DEPTH_CHARTS_URL = (
+    "https://github.com/nflverse/nflverse-data/releases/download/"
+    "depth_charts/depth_charts_{season}.csv"
+)
+INJURIES_URL = (
+    "https://github.com/nflverse/nflverse-data/releases/download/"
+    "injuries/injuries_{season}.csv"
+)
 
 
 def download_nflverse_season(season: int, cache_dir: str | Path) -> dict[str, Path]:
@@ -28,7 +36,36 @@ def download_nflverse_season(season: int, cache_dir: str | Path) -> dict[str, Pa
         "games": (GAMES_URL, destination / "games.csv"),
     }
     for url, path in targets.values():
-        response = requests.get(url, timeout=60)
-        response.raise_for_status()
+        try:
+            response = requests.get(url, timeout=60)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise OSError(f"could not download nflverse season data: {exc}") from exc
+        path.write_bytes(response.content)
+    return {name: path for name, (_, path) in targets.items()}
+
+
+def download_nflverse_current_context(
+    season: int, cache_dir: str | Path
+) -> dict[str, Path]:
+    """Download current depth charts and official weekly injury reports."""
+    destination = Path(cache_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    targets = {
+        "depth_charts": (
+            DEPTH_CHARTS_URL.format(season=season),
+            destination / f"depth_charts_{season}.csv",
+        ),
+        "injuries": (
+            INJURIES_URL.format(season=season),
+            destination / f"injuries_{season}.csv",
+        ),
+    }
+    for url, path in targets.values():
+        try:
+            response = requests.get(url, timeout=60)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise OSError(f"could not download current nflverse context: {exc}") from exc
         path.write_bytes(response.content)
     return {name: path for name, (_, path) in targets.items()}

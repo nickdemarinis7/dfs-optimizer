@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 from dataclasses import replace
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -20,6 +22,7 @@ from dfs_optimizer.app_ui import (
 from dfs_optimizer.importers import match_projections
 from dfs_optimizer.models import ContestFormat, Position, Sport
 from dfs_optimizer.optimization import (
+    DEFAULT_SHOWDOWN_MAX_KICKERS_AND_DEFENSES,
     ClassicOptimizationSettings,
     LineupOptimizationError,
     SingleGameOptimizationSettings,
@@ -28,15 +31,25 @@ from dfs_optimizer.optimization import (
     generate_single_game_3max_portfolio,
     generate_single_game_lineups,
 )
-from dfs_optimizer.services.projections import apply_uploaded_ownership
+from dfs_optimizer.services.projections import (
+    apply_uploaded_ownership,
+    apply_uploaded_projection_consensus,
+)
 from dfs_optimizer.services.ownership import (
     NFL_CLASSIC_OWNERSHIP_MODEL_VERSION,
     NFL_SHOWDOWN_OWNERSHIP_MODEL_VERSION,
     estimate_nfl_ownership,
 )
 from dfs_optimizer.services.opportunity import apply_opportunity_risk
+from dfs_optimizer.services.props import apply_nfl_prop_role_signals
+from dfs_optimizer.data_sources.nfl_props import (
+    NFL_TEAM_NAMES,
+    PROP_MARKETS,
+    fetch_nfl_prop_consensus,
+)
 from dfs_optimizer.services.role_adjustments import apply_current_role_adjustments
 from dfs_optimizer.services.player_context import (
+    PlayerContext,
     fetch_player_context,
     import_player_context_csv,
     player_context_csv_template,
@@ -91,6 +104,13 @@ canonical_base_projections = (
 base_projections = restore_verified_cfb_starters(
     slate, canonical_base_projections, player_context
 )
+prop_matches = 0
+if slate.sport == Sport.NFL and st.session_state.get("nfl_prop_consensus"):
+    base_projections, prop_matches = apply_nfl_prop_role_signals(
+        slate,
+        base_projections,
+        tuple(st.session_state["nfl_prop_consensus"]),
+    )
 projections, role_adjustments = apply_current_role_adjustments(
     slate, base_projections, player_context
 )
@@ -129,11 +149,34 @@ suggested_excluded = (
 label = lambda pid: f"{players[pid].name} — {players[pid].team} {players[pid].primary_position.value}"
 
 
-def store_player_context(items, source: str = "Sleeper daily player map") -> None:
+def store_player_context(
+    items, source: str = "Sleeper + nflverse depth and injury data"
+) -> None:
     st.session_state["player_context"] = tuple(items)
     st.session_state["player_context_source"] = source
     st.session_state["player_context_error"] = None
     st.session_state["player_context_built_at"] = datetime.now(timezone.utc)
+    st.session_state["player_context_attempted"] = True
+
+
+def store_role_report(player_id: str, expected_role: str | None, note: str) -> None:
+    """Merge an auditable pre-lock workload report into live player context."""
+    contexts = {
+        item.platform_id: item
+        for item in st.session_state.get("player_context", ())
+    }
+    current = contexts.get(player_id) or PlayerContext(
+        player_id, None, None, None, None
+    )
+    contexts[player_id] = replace(
+        current,
+        expected_role=expected_role,
+        role_note=note.strip() or None,
+    )
+    # Do not call ``store_player_context`` here: a manual report must not make
+    # an older automated injury/depth snapshot appear freshly downloaded.
+    st.session_state["player_context"] = tuple(contexts.values())
+    st.session_state["player_context_error"] = None
     st.session_state["player_context_attempted"] = True
 
 
@@ -187,12 +230,12 @@ if slate.sport == Sport.NFL:
     if age_minutes is not None:
         freshness = "just now" if age_minutes < 1 else f"{age_minutes:.0f} minutes ago"
         st.caption(
-            f"Player news checked {freshness} · {len(player_context)} matched · "
+            f"Injuries and depth chart checked {freshness} · {len(player_context)} matched · "
             f"{len(prelock.unmatched_player_ids)} unmatched"
         )
         if age_minutes > 30:
             st.warning(
-                "Player news is more than 30 minutes old. Refresh it before finalizing entries.",
+                "Role data is more than 30 minutes old. Refresh it before finalizing entries.",
                 icon=":material/update:",
             )
     if prelock.unavailable_player_ids:
@@ -251,7 +294,7 @@ if slate.sport == Sport.NFL:
             icon=":material/lock_clock:",
         )
     if st.button(
-        "Refresh player news",
+        "Refresh injuries & depth chart",
         icon=":material/refresh:",
         width="stretch",
         key="refresh-player-context",
@@ -259,14 +302,153 @@ if slate.sport == Sport.NFL:
         try:
             with st.spinner("Refreshing injuries and depth charts…"):
                 refreshed = fetch_player_context(slate, "data/cache", refresh=True)
+            saved_reports = {
+                item.platform_id: item
+                for item in player_context
+                if item.expected_role
+            }
+            refreshed = tuple(
+                replace(
+                    item,
+                    expected_role=saved_reports[item.platform_id].expected_role,
+                    role_note=saved_reports[item.platform_id].role_note,
+                )
+                if item.platform_id in saved_reports else item
+                for item in refreshed
+            )
+            refreshed_ids = {item.platform_id for item in refreshed}
+            refreshed += tuple(
+                item for player_id, item in saved_reports.items()
+                if player_id not in refreshed_ids
+            )
             store_player_context(refreshed)
             st.session_state.pop(f"build-exclusions-{hash(slate)}", None)
             st.session_state.pop(f"build-max-once-{hash(slate)}", None)
-            st.toast("Player news is current.", icon=":material/check_circle:")
+            st.toast("Injuries and depth chart are current.", icon=":material/check_circle:")
             st.rerun()
         except (OSError, ValueError) as exc:
             st.session_state["player_context_error"] = str(exc)
-            st.error("Player news could not be refreshed. Try again before lock.")
+            st.error("Injuries and depth chart could not be refreshed. Try again before lock.")
+    odds_key = os.environ.get("THE_ODDS_API_KEY", "")
+    if not odds_key:
+        try:
+            odds_key = str(st.secrets.get("THE_ODDS_API_KEY", ""))
+        except (FileNotFoundError, KeyError):
+            odds_key = ""
+    estimated_prop_cost = len(slate.games) * len(PROP_MARKETS)
+    if odds_key:
+        if st.button(
+            "Refresh betting-market roles",
+            icon=":material/query_stats:",
+            width="stretch",
+            key=f"refresh-nfl-props-{hash(slate)}",
+            help=(
+                f"Requests {len(PROP_MARKETS)} player-prop markets for each of "
+                f"{len(slate.games)} games; estimated maximum cost is "
+                f"{estimated_prop_cost} Odds API credits."
+            ),
+        ):
+            try:
+                teams = frozenset(
+                    NFL_TEAM_NAMES[team]
+                    for team in slate.teams
+                    if team in NFL_TEAM_NAMES
+                )
+                with st.spinner("Reading current player-prop markets…"):
+                    props, remaining = fetch_nfl_prop_consensus(
+                        odds_key, teams=teams
+                    )
+                st.session_state["nfl_prop_consensus"] = props
+                st.session_state["nfl_prop_checked_at"] = datetime.now(timezone.utc)
+                st.session_state["nfl_prop_credits_remaining"] = remaining
+                st.rerun()
+            except (OSError, ValueError) as exc:
+                st.error(str(exc))
+        if st.session_state.get("nfl_prop_checked_at"):
+            remaining = st.session_state.get("nfl_prop_credits_remaining")
+            st.caption(
+                f"Betting roles · {prop_matches} players matched"
+                + (f" · {remaining} API credits remaining" if remaining is not None else "")
+            )
+    else:
+        st.caption(
+            "Add THE_ODDS_API_KEY to Streamlit secrets to enable current NFL "
+            "player-prop role confirmation."
+        )
+    st.divider()
+    st.markdown("**Late role report**")
+    st.caption(
+        "Use confirmed beat-report, coach, or inactive-list information when the "
+        "depth chart no longer describes the expected workload. The run archive "
+        "will save the adjustment and your note."
+    )
+    role_candidates = sorted(
+        (
+            player_id for player_id, player in players.items()
+            if player.primary_position != Position.DST
+        ),
+        key=lambda player_id: (players[player_id].team, players[player_id].name),
+    )
+    role_player_id = st.selectbox(
+        "Player affected by the report",
+        role_candidates,
+        index=None,
+        format_func=label,
+        placeholder="Choose a player",
+        key=f"role-report-player-{hash(slate)}",
+        help="Only add a report when it materially changes the expected game-day role.",
+    )
+    role_choice = st.segmented_control(
+        "Expected workload",
+        ("Expanded", "Normal", "Committee", "Limited"),
+        default="Normal",
+        width="stretch",
+        help=(
+            "Expanded adds 10%; Committee removes 15%; Limited removes 40%. "
+            "Normal leaves the median unchanged and suppresses a stale depth-chart penalty."
+        ),
+        key=f"role-report-choice-{hash(slate)}",
+    )
+    role_note = st.text_input(
+        "What changed?",
+        placeholder="Example: coach said he will not lead the backfield",
+        key=f"role-report-note-{hash(slate)}",
+    )
+    role_buttons = st.columns(2)
+    if role_buttons[0].button(
+        "Apply role report",
+        type="primary",
+        width="stretch",
+        disabled=role_player_id is None or not role_note.strip(),
+        key=f"apply-role-report-{hash(slate)}",
+    ):
+        store_role_report(role_player_id, role_choice.casefold(), role_note)
+        st.rerun()
+    selected_context = context_by_id.get(role_player_id) if role_player_id else None
+    if role_buttons[1].button(
+        "Clear selected report",
+        width="stretch",
+        disabled=selected_context is None or not selected_context.expected_role,
+        key=f"clear-role-report-{hash(slate)}",
+    ):
+        store_role_report(role_player_id, None, "")
+        st.rerun()
+    active_role_reports = [item for item in player_context if item.expected_role]
+    if active_role_reports:
+        st.dataframe(
+            [
+                {
+                    "Player": players[item.platform_id].name,
+                    "Team": players[item.platform_id].team,
+                    "Expected role": item.expected_role.title(),
+                    "Evidence": item.role_note or "—",
+                }
+                for item in active_role_reports
+                if item.platform_id in players
+            ],
+            hide_index=True,
+            width="stretch",
+        )
 else:
     current_projection_key = st.session_state.get("projection_key") or ()
     cfb_model = (
@@ -414,11 +596,11 @@ if slate.contest_format == ContestFormat.CLASSIC:
     maximum_qb_exposure = .67
     maximum_dst_exposure = .34
     require_qb_stack = True
-    require_bring_back = True
+    require_bring_back = False
 else:
     maximum_multiplier_exposure = .34
     maximum_players_per_team = 4
-    maximum_kickers_and_defenses = 1
+    maximum_kickers_and_defenses = DEFAULT_SHOWDOWN_MAX_KICKERS_AND_DEFENSES
 
 customize_strategy = st.toggle(
     "Customize strategy",
@@ -467,9 +649,13 @@ if customize_strategy:
                 help="Pairs each quarterback with at least one of his receivers.",
             )
             require_bring_back = st.toggle(
-                "Require an opponent bring-back", value=True,
+                "Require an opponent bring-back", value=False,
                 disabled=not require_qb_stack, key="build-bring-back",
-                help="Adds an opponent from the same game.",
+                help=(
+                    "Optional for large Classic slates. Recent top-field lineups used "
+                    "bring-backs often, but not consistently enough to require one in "
+                    "every entry."
+                ),
             )
         else:
             maximum_multiplier_exposure = int(st.number_input(
@@ -482,9 +668,13 @@ if customize_strategy:
                 help="Four is balanced. Five permits aggressive 5–1 game scripts.",
             ))
             maximum_kickers_and_defenses = int(st.number_input(
-                "Maximum kickers and defenses", 0, 3, 1,
+                "Maximum kickers and defenses", 0, 3,
+                DEFAULT_SHOWDOWN_MAX_KICKERS_AND_DEFENSES,
                 key="build-maximum-kicker-defense",
-                help="Raise this to test low-scoring or double-kicker constructions.",
+                help=(
+                    "Two preserves double-kicker and kicker/defense paths that appeared "
+                    "in three of our first six verified Showdown winners."
+                ),
             ))
 
         if slate.contest_format == ContestFormat.CLASSIC:
@@ -500,6 +690,69 @@ if customize_strategy:
             format_func=label, key=f"build-max-once-{hash(slate)}",
             help="Automatically selected low-floor values can appear in only one lineup.",
         )
+        if slate.sport == Sport.NFL:
+            consensus = st.file_uploader(
+                "External projections CSV (optional)",
+                type="csv",
+                key=f"external-projections-{hash(slate)}",
+                help=(
+                    "Columns: name, team, projected_points, with platform_id optional. "
+                    "The external median receives 35% weight and is safety-capped."
+                ),
+            )
+            if consensus:
+                consensus_content = consensus.getvalue()
+                consensus_hash = hashlib.sha256(consensus_content).hexdigest()
+                if st.session_state.get("external_projection_hash") != consensus_hash:
+                    try:
+                        unblended = tuple(
+                            st.session_state.get("unblended_base_projections", ())
+                        ) or canonical_base_projections
+                        blended, consensus_matches = apply_uploaded_projection_consensus(
+                            slate, unblended, consensus.name, consensus_content
+                        )
+                        if not consensus_matches:
+                            raise ValueError(
+                                "external projection file did not match any slate players"
+                            )
+                        st.session_state["unblended_base_projections"] = unblended
+                        st.session_state["base_projections"] = blended
+                        st.session_state["external_projection_hash"] = consensus_hash
+                        st.session_state["external_projection_content"] = consensus_content
+                        st.session_state["external_projection_name"] = consensus.name
+                        st.session_state["external_projection_matches"] = consensus_matches
+                        st.toast(
+                            f"Blended external projections for {consensus_matches} players.",
+                            icon=":material/compare_arrows:",
+                        )
+                        st.rerun()
+                    except (OSError, ValueError) as exc:
+                        st.error(f"Could not blend external projections: {exc}")
+            if st.session_state.get("external_projection_hash"):
+                st.caption(
+                    f"Consensus active · {st.session_state.get('external_projection_matches', 0)} "
+                    "players matched · 35% external / 65% internal"
+                )
+                if st.button(
+                    "Remove external projection blend",
+                    width="stretch",
+                    key=f"remove-external-projections-{hash(slate)}",
+                ):
+                    original = tuple(
+                        st.session_state.get("unblended_base_projections", ())
+                    )
+                    if original:
+                        st.session_state["base_projections"] = original
+                    for key in (
+                        "unblended_base_projections", "external_projection_hash",
+                        "external_projection_content", "external_projection_name",
+                        "external_projection_matches",
+                    ):
+                        st.session_state.pop(key, None)
+                    # Re-run any still-uploaded ownership file against the
+                    # restored internal baseline on the next render.
+                    st.session_state.pop("ownership_hash", None)
+                    st.rerun()
         ownership = st.file_uploader("Projected ownership CSV (optional)", type="csv")
         if ownership:
             content = ownership.getvalue()
@@ -567,10 +820,14 @@ def include_in_status_view(player) -> bool:
         (opportunity := opportunity_by_id.get(player.platform_id)) is not None
         and opportunity.tier in {"Watch", "Fragile"}
     )
+    role_reported = bool(
+        player.platform_id in context_by_id
+        and context_by_id[player.platform_id].expected_role
+    )
     if status_view == "Available":
         return not status and not context_flagged and not opportunity_flagged
     if status_view == "Flagged":
-        return bool(status) or context_flagged or opportunity_flagged
+        return bool(status) or context_flagged or opportunity_flagged or role_reported
     if status_view == "Unavailable":
         return (
             status in unavailable_statuses
@@ -608,9 +865,19 @@ for player in players.values():
         "Opportunity": opportunity.tier if opportunity else "Unrated",
         "Opportunity %": opportunity.score if opportunity else None,
         "Opportunity why": "; ".join(opportunity.reasons) if opportunity else "—",
+        "Prop markets": projection.prop_market_count,
         "Est. own %": projection.projected_ownership,
         "Status": (player.status or "Available").upper(),
         "Role": context_by_id[player.platform_id].role_label if player.platform_id in context_by_id else "—",
+        "News role": (
+            context_by_id[player.platform_id].expected_role.title()
+            if player.platform_id in context_by_id
+            and context_by_id[player.platform_id].expected_role else "—"
+        ),
+        "News evidence": (
+            context_by_id[player.platform_id].role_note or "—"
+            if player.platform_id in context_by_id else "—"
+        ),
         "Role adj.": role_adjustment.factor if role_adjustment else 1.0,
         "Why": role_adjustment.reason if role_adjustment else "No current-role reduction",
     }
@@ -658,6 +925,10 @@ st.dataframe(
         "Opportunity why": st.column_config.TextColumn(
             help="The evidence behind the current opportunity grade.",
         ),
+        "Prop markets": st.column_config.NumberColumn(
+            format="%d",
+            help="Number of current consensus player-prop markets matched for this player.",
+        ),
         "Est. own %": st.column_config.NumberColumn(
             format="%.1f%%",
             help="Estimated from this slate's salary, projection, value, ceiling, and position rank. It is not reported contest ownership.",
@@ -670,7 +941,13 @@ st.dataframe(
         ),
         "Role adj.": st.column_config.NumberColumn(
             format="%.0f%%",
-            help="Current depth-chart multiplier. A value below 100% means historical usage was reduced because a healthy starter is now ahead of this player.",
+            help="Bounded multiplier from the current depth chart and any confirmed late role report.",
+        ),
+        "News role": st.column_config.TextColumn(
+            help="Structured pre-lock workload report. This takes priority over nominal depth order.",
+        ),
+        "News evidence": st.column_config.TextColumn(
+            help="The note recorded when the workload report was applied.",
         ),
         "Why": st.column_config.TextColumn(
             help="The specific current-role reason for any projection reduction."
@@ -768,6 +1045,8 @@ action_guide(
 
 config_key = (
     st.session_state.get("projection_key"), st.session_state.get("ownership_hash"),
+    st.session_state.get("external_projection_hash"),
+    st.session_state.get("nfl_prop_checked_at"),
     hash(slate), tuple(sorted(locked_ids)), tuple(sorted(excluded_ids)), tuple(sorted(limited_ids)),
     lineup_count, minimum_unique, maximum_player_exposure, include_ceiling_lineup,
     maximum_qb_exposure if slate.contest_format == ContestFormat.CLASSIC else None,
@@ -889,7 +1168,7 @@ if generate_clicked:
                     and lineup_count == 3 and minimum_unique == 3
                     and maximum_player_exposure == .67 and maximum_qb_exposure == .67
                     and maximum_dst_exposure == .34 and include_ceiling_lineup
-                    and require_qb_stack and require_bring_back
+                    and require_qb_stack
                 )
                 lineups = (
                     generate_classic_3max_portfolio(slate, matches, settings)
@@ -937,7 +1216,8 @@ if generate_clicked:
                     and maximum_player_exposure == .67
                     and maximum_multiplier_exposure == .34 and include_ceiling_lineup
                     and maximum_players_per_team == 4
-                    and maximum_kickers_and_defenses == 1
+                    and maximum_kickers_and_defenses
+                    == DEFAULT_SHOWDOWN_MAX_KICKERS_AND_DEFENSES
                 )
                 if use_tuned_3max:
                     try:
@@ -1052,7 +1332,7 @@ if generate_clicked:
                     )
             status.update(label="Portfolio ready", state="complete", expanded=False)
         lineup_settings = {
-            "strategy_version": "tournament-defaults-v3",
+            "strategy_version": "tournament-defaults-v4",
             "projection_model_version": (
                 st.session_state.get("projection_key", (None,))[0]
                 if st.session_state.get("projection_key") else None
@@ -1111,6 +1391,8 @@ if generate_clicked:
                     "practice_participation": item.practice_participation,
                     "active": item.active,
                     "verified_projection": item.verified_projection,
+                    "expected_role": item.expected_role,
+                    "role_note": item.role_note,
                 }
                 for item in live_context
                 if item.platform_id in players
@@ -1152,6 +1434,20 @@ if generate_clicked:
             "ceiling_lineup_number": lineup_count if include_ceiling_lineup else None,
             "ownership_coverage": ownership_coverage,
             "ownership_source": ownership_source,
+            "external_projection_source": st.session_state.get(
+                "external_projection_name"
+            ),
+            "external_projection_matches": st.session_state.get(
+                "external_projection_matches"
+            ),
+            "external_projection_weight": (
+                .35 if st.session_state.get("external_projection_hash") else None
+            ),
+            "nfl_prop_players_matched": prop_matches or None,
+            "nfl_prop_checked_at": (
+                st.session_state["nfl_prop_checked_at"].isoformat()
+                if st.session_state.get("nfl_prop_checked_at") else None
+            ),
             "ownership_model_version": (
                 NFL_CLASSIC_OWNERSHIP_MODEL_VERSION
                 if ownership_source == "slate-relative estimate"
@@ -1219,6 +1515,17 @@ if generate_clicked:
             input_snapshots["cfb-game-lines.csv"] = lines_snapshot
         if ownership_snapshot := st.session_state.get("ownership_content"):
             input_snapshots["uploaded-ownership.csv"] = ownership_snapshot
+        if consensus_snapshot := st.session_state.get("external_projection_content"):
+            input_snapshots["external-projections.csv"] = consensus_snapshot
+        if prop_snapshot := st.session_state.get("nfl_prop_consensus"):
+            input_snapshots["nfl-prop-consensus.json"] = json.dumps([
+                {
+                    "player": item.player,
+                    "event_id": item.event_id,
+                    "markets": dict(item.markets),
+                }
+                for item in prop_snapshot
+            ], indent=2).encode()
         run_archive = build_run_archive(
             slate,
             projections,

@@ -41,6 +41,7 @@ def build_run_archive(
         "projected_ownership", "p10", "p25", "p75", "p90", "bust_probability",
         "sample_size", "opportunity_stability", "data_age_periods",
         "confidence_score", "confidence_tier", "confidence_reasons",
+        "prop_market_count", "prop_coverage_checked",
     ))
     for item in projections:
         writer.writerow((
@@ -50,6 +51,7 @@ def build_run_archive(
             item.sample_size, item.opportunity_stability, item.data_age_periods,
             item.confidence_score, item.confidence_tier,
             json.dumps(item.confidence_reasons),
+            item.prop_market_count, item.prop_coverage_checked,
         ))
     projection_content = projection_output.getvalue().encode()
     artifact_content = {

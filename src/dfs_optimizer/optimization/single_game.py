@@ -9,6 +9,12 @@ from dfs_optimizer.rules import SingleGameRules, single_game_rules_for
 from .classic import LineupOptimizationError
 
 
+# Three of the first six verified DK/FD Showdown winners used either two
+# kickers or a kicker/defense pairing. One remains a useful user-selected
+# constraint, but it is too restrictive as the tournament default.
+DEFAULT_SHOWDOWN_MAX_KICKERS_AND_DEFENSES = 2
+
+
 @dataclass(frozen=True, slots=True)
 class SingleGameEntry:
     slot: str

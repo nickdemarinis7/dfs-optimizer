@@ -91,6 +91,30 @@ class OpportunityRiskTests(unittest.TestCase):
         self.assertNotIn(assessments[0].tier, {"Watch", "Fragile"})
         self.assertNotIn("QB2", " ".join(assessments[0].reasons))
 
+    def test_one_game_sample_cannot_look_like_a_strong_safe_role(self) -> None:
+        player = Player(
+            "rb2", "Small Sample Back", Position.RB,
+            (Position.RB, Position.FLEX), 3000, "GB", "DAL", "DAL@GB",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.CLASSIC, (player,), "test"
+        )
+        projection = Projection(
+            player.name, player.team, 2.6, platform_id=player.platform_id,
+            floor=2.6, ceiling=2.6, p10=2.6, p25=2.6, p75=2.6, p90=2.6,
+            bust_probability=0, sample_size=1,
+        )
+
+        adjusted, assessments = apply_opportunity_risk(
+            slate, (projection,),
+            (PlayerContext("rb2", 2, None, None, True),),
+        )
+
+        self.assertEqual(assessments[0].tier, "Watch")
+        self.assertIn("one-game sample", " ".join(assessments[0].reasons))
+        self.assertNotIn("low modeled bust", " ".join(assessments[0].reasons))
+        self.assertGreaterEqual(adjusted[0].bust_probability, .45)
+
 
 if __name__ == "__main__":
     unittest.main()

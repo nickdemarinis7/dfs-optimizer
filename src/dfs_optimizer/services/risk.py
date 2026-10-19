@@ -160,6 +160,8 @@ def suggest_default_excluded_player_ids(
                 for player in quarterbacks
                 if context_by_id.get(player.platform_id)
                 and (context_by_id[player.platform_id].depth_chart_position or 1) > 1
+                and (context_by_id[player.platform_id].expected_role or "")
+                .strip().casefold() not in {"expanded", "normal"}
             )
 
     extreme_showdown_punts: set[str] = set()
@@ -255,6 +257,8 @@ def suggest_max_once_player_ids(
         for player in slate.players
         if player.primary_position in {Position.RB, Position.WR, Position.TE}
         and (context := context_by_id.get(player.platform_id)) is not None
+        and (context.expected_role or "").strip().casefold()
+        not in {"expanded", "normal"}
         and (
             (player.primary_position == Position.TE and (context.depth_chart_position or 0) >= 2)
             or (context.depth_chart_position or 0) >= 3

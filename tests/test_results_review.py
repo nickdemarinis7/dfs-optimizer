@@ -53,6 +53,7 @@ class ResultsReviewTests(unittest.TestCase):
         self.assertEqual(report.bands[0].average_duplication, 2)
         self.assertTrue(report.bands[0].qb_stack_rate)
         self.assertIsNotNone(report.bands[0].average_salary_left)
+        self.assertEqual(report.bands[0].average_quarterbacks, 1)
 
     def test_matches_generated_classic_lineup(self) -> None:
         slate, matches = make_slate(Platform.DRAFTKINGS)

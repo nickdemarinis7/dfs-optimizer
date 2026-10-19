@@ -254,6 +254,8 @@ def _contexts_from_settings(slate, settings) -> tuple[PlayerContext, ...]:
             item.get("practice_participation"),
             item.get("active"),
             item.get("verified_projection"),
+            item.get("expected_role"),
+            item.get("role_note"),
         ))
     return tuple(contexts)
 
@@ -331,6 +333,11 @@ def _read_projections(content: bytes) -> tuple[Projection, ...]:
         confidence_score=optional(row.get("confidence_score")),
         confidence_tier=row.get("confidence_tier") or None,
         confidence_reasons=tuple(json.loads(row.get("confidence_reasons") or "[]")),
+        prop_market_count=(
+            int(row["prop_market_count"])
+            if row.get("prop_market_count") not in {None, ""} else None
+        ),
+        prop_coverage_checked=(row.get("prop_coverage_checked") == "True"),
     ) for row in rows)
 
 

@@ -1,6 +1,7 @@
 from .projections import (
     HistoricalDataCoverage,
     HistoricalDataPaths,
+    apply_uploaded_projection_consensus,
     apply_uploaded_ownership,
     build_historical_projections,
     download_historical_data,
@@ -21,13 +22,16 @@ from .ownership import (
     estimate_nfl_showdown_ownership,
 )
 from .opportunity import OpportunityAssessment, apply_opportunity_risk
+from .props import apply_nfl_prop_role_signals
 from .role_adjustments import RoleAdjustment, apply_current_role_adjustments
 from .player_context import (
     PlayerContext,
     PrelockSummary,
     fetch_player_context,
     import_player_context_csv,
+    match_nflverse_player_context,
     match_player_context,
+    merge_player_context_sources,
     player_context_csv_template,
     summarize_prelock_context,
     verified_player_context_ids,
@@ -75,6 +79,7 @@ __all__ = [
     "analyze_portfolio",
     "audit_lineups",
     "apply_uploaded_ownership",
+    "apply_uploaded_projection_consensus",
     "apply_cfb_game_lines",
     "cfb_consensus_lines_csv",
     "cfb_projection_input_snapshot",
@@ -90,6 +95,7 @@ __all__ = [
     "NFL_SHOWDOWN_OWNERSHIP_MODEL_VERSION",
     "OpportunityAssessment",
     "apply_opportunity_risk",
+    "apply_nfl_prop_role_signals",
     "infer_cfb_season",
     "infer_cfb_week",
     "infer_cfb_team_names_from_file",
@@ -103,7 +109,9 @@ __all__ = [
     "PrelockSummary",
     "fetch_player_context",
     "import_player_context_csv",
+    "match_nflverse_player_context",
     "match_player_context",
+    "merge_player_context_sources",
     "player_context_csv_template",
     "summarize_prelock_context",
     "verified_player_context_ids",

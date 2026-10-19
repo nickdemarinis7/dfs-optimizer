@@ -33,6 +33,8 @@ def preflight_lineups(
     salary_loaded_at: datetime | None = None,
     player_context: tuple[PlayerContext, ...] = (),
     player_context_built_at: datetime | None = None,
+    prop_checked_at: datetime | None = None,
+    prop_players_matched: int = 0,
     now: datetime | None = None,
 ) -> PreflightReport:
     """Independently validate the artifacts that will be submitted."""
@@ -262,6 +264,36 @@ def preflight_lineups(
                 f"Injury and depth-chart check is fresh ({context_age * 60:.0f} minutes old)"
             )
 
+    if slate.sport == Sport.NFL and slate.contest_format == ContestFormat.SINGLE_GAME:
+        prop_now = now or datetime.now(timezone.utc)
+        if prop_checked_at is None:
+            findings.append(AuditFinding(
+                "WARNING", "prop_context_missing",
+                "Betting-market role confirmation was not run for this Showdown slate. "
+                "Refresh betting-market roles before lock when the Odds API is available.",
+            ))
+        else:
+            checked_at = prop_checked_at
+            if checked_at.tzinfo is None:
+                checked_at = checked_at.replace(tzinfo=timezone.utc)
+            prop_age = max(0.0, (prop_now - checked_at).total_seconds() / 3600)
+            if prop_age > 1:
+                findings.append(AuditFinding(
+                    "WARNING", "stale_prop_context",
+                    f"Betting-market roles were checked {prop_age:.1f} hours ago. "
+                    "Refresh them before lock.",
+                ))
+            elif prop_players_matched < 5:
+                findings.append(AuditFinding(
+                    "WARNING", "thin_prop_context",
+                    f"Betting markets matched only {prop_players_matched} players. "
+                    "Treat role confirmation as incomplete.",
+                ))
+            else:
+                passed.append(
+                    f"Betting-market roles are fresh for {prop_players_matched} players"
+                )
+
     role_risks = suggest_default_excluded_player_ids(
         slate, projections, player_context
     )
@@ -286,17 +318,39 @@ def preflight_lineups(
         context = context_by_id.get(player_id)
         if context is None or count < 2:
             continue
+        expected_role = (context.expected_role or "").strip().casefold()
         depth = context.depth_chart_position or 0
         subordinate = (
             player.primary_position == Position.TE and depth >= 2
         ) or (
             player.primary_position in {Position.RB, Position.WR} and depth >= 3
         )
-        if subordinate:
+        if subordinate and expected_role not in {"expanded", "normal"}:
             findings.append(AuditFinding(
                 "WARNING", "subordinate_skill_exposure",
                 f"{player.name} is depth {depth} and appears in {count} lineups. "
                 "Confirm that the player's current role supports this exposure.",
             ))
+        if expected_role == "limited":
+            findings.append(AuditFinding(
+                "WARNING", "limited_role_exposure",
+                f"{player.name} has a confirmed limited-role report and appears in "
+                f"{count} lineups. Reduce exposure or update the report before submission.",
+            ))
+
+    unavailable_statuses = {"IR", "O", "OUT", "INACTIVE", "INJURED RESERVE"}
+    for context in player_context:
+        expected_role = (context.expected_role or "").strip().casefold()
+        status = (context.injury_status or "").strip().upper()
+        if expected_role in {"expanded", "normal"} and (
+            context.active is False or status in unavailable_statuses
+        ):
+            player = players_by_id.get(context.platform_id)
+            if player is not None:
+                findings.append(AuditFinding(
+                    "ERROR", "role_report_availability_conflict",
+                    f"{player.name} has a {expected_role} role report but is currently "
+                    "marked unavailable. Clear or correct the report before submission.",
+                ))
 
     return PreflightReport(tuple(findings), tuple(passed))

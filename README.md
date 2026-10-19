@@ -90,6 +90,7 @@ Streamlit Community Cloud under **App settings → Secrets**:
 
 ```toml
 THE_ODDS_API_KEY = "your-key"
+# Optional paid NFL news/depth/injury provider:
 ```
 
 The same value can be provided locally as an environment variable. Automatic
@@ -213,10 +214,10 @@ template; the exporter does not invent that metadata.
 For DraftKings and FanDuel Classic, the web app includes a **3-max tournament**
 preset. It generates three lineups with three-player uniqueness, allows strong
 non-QB cores, limits each unlocked player to two lineups, uses three different
-defenses by default, and requires both the
-QB stack partner and opponent bring-back to project for at least seven points,
+defenses by default, requires a QB stack partner to project for at least seven
+points, treats an opponent bring-back as optional by default,
 prevents the same QB/pass-catcher/bring-back trio from repeating, and enables
-an opponent bring-back. Custom portfolios set exposure as
+an explicit bring-back toggle. Custom portfolios set exposure as
 an exact number of appearances instead of an ambiguous percentage. Portfolio
 results show unique-QB count, maximum exposure, average lineup overlap, the
 primary stack in each lineup, and warnings for concentration, projection drop,
@@ -249,21 +250,43 @@ Historical forecasts apply a conservative role gate: when at least two
 current-season team games are available, a player with fewer than two recent
 opportunities per game and a platform fantasy average of two points or less is
 left unprojected. This prevents an old starter workload from making a current
-backup look like value. The 3-max preset also requires an opponent bring-back
-to project for at least seven points. Searchable lock/exclude controls remain
+backup look like value. An enabled opponent bring-back must project for at
+least seven points. Searchable lock/exclude controls remain
 available for late depth-chart and injury news that historical data cannot see.
 For players with activity in multiple current-season games, opportunity volume
 uses the two most recent games against the earlier active-role baseline. A
 sustained drop in touches, targets, or offensive snap share can reduce the role
 to 0.20x; pure zero-game absences remain neutral so an injury is not
 automatically treated as a demotion. Live Sleeper context uses
-`depth_chart_order` for the actual role rank. TE2 and deeper tight ends, plus
-RB3/WR3 and deeper players, are flagged and capped at one lineup by default.
-When a healthy starter is currently ahead of them, the pre-lock layer also
-reduces TE2+ projections to 65% and RB3/WR3+ projections to 75%. Player review
-shows the multiplier and its reason, and each saved run records the original
-and adjusted projections. The app also reports the newest available stats and
+`depth_chart_order` for the actual role rank. TE2+, RB3+, and WR3+ players are
+flagged and may be capped by opportunity risk. Median projections are reduced
+only when deeper depth order is accompanied by a material recent opportunity
+decline; depth order alone is not treated as proof of a reduced role. Player
+review shows the multiplier and its reason, and each saved run records the
+original and adjusted projections. The app also reports the newest available stats and
 snap-count weeks so stale model inputs are visible before generation.
+
+NFL builds can also blend a trusted external projection CSV with the internal
+historical forecast. The format requires `name`, `team`, and
+`projected_points`, with `platform_id` optional. The blend keeps the internal
+model at 65% weight, caps each external estimate to 60%-140% of the internal
+median, scales the existing outcome range consistently, and preserves the
+internal opportunity and uncertainty metadata. The uploaded source is saved in
+the run package.
+
+The pre-lock player check supports structured late role reports when injury or
+beat reporting supersedes the nominal depth chart. Expanded, normal,
+committee, and limited workload designations apply bounded adjustments, require
+an evidence note, remain separate from automated data-freshness timestamps, and
+are archived with the run.
+
+When `THE_ODDS_API_KEY` is configured, NFL pre-lock review can explicitly
+refresh four player-prop markets per slate game. Event discovery is free, while
+event-market requests consume Odds API credits. The button displays the maximum
+estimated cost before requesting data and reports remaining credits afterward.
+Multiple active props add conservative opportunity confidence; a missing prop
+only counts negatively when at least five other players in the same game were
+matched, preventing sparse market coverage from masquerading as a role demotion.
 
 The 3-max preset also requires stack partners and bring-backs to have at least
 a 12-point historical ceiling. Every unlocked player is capped at two of the

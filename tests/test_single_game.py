@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dfs_optimizer.importers import import_salary_csv, match_projections
 from dfs_optimizer.models import ContestFormat, Platform, Position
 from dfs_optimizer.optimization import (
+    DEFAULT_SHOWDOWN_MAX_KICKERS_AND_DEFENSES,
     SingleGameOptimizationSettings,
     generate_single_game_3max_portfolio,
     generate_single_game_lineups,
@@ -39,6 +41,9 @@ class SingleGameTests(unittest.TestCase):
         self.assertEqual(len(self.fd.players), 51)
         self.assertTrue(all(player.multiplier_salary for player in self.fd.players))
 
+    def test_tournament_default_allows_two_special_teams_players(self) -> None:
+        self.assertEqual(DEFAULT_SHOWDOWN_MAX_KICKERS_AND_DEFENSES, 2)
+
     def test_optimizes_both_single_game_formats(self) -> None:
         for slate, cap, multiplier_slot in ((self.dk, 50_000, "CPT"), (self.fd, 60_000, "MVP")):
             with self.subTest(platform=slate.platform):
@@ -61,6 +66,36 @@ class SingleGameTests(unittest.TestCase):
         )
 
         self.assertFalse(report.blocking)
+        self.assertTrue(any(
+            item.code == "prop_context_missing" for item in report.findings
+        ))
+
+    def test_showdown_preflight_accepts_fresh_prop_role_coverage(self) -> None:
+        projections = build_platform_average_projections(self.fd)
+        lineup = optimize_single_game_lineup(
+            self.fd, match_projections(self.fd, projections)
+        )
+        now = datetime.now(timezone.utc)
+
+        report = preflight_lineups(
+            self.fd,
+            projections,
+            (lineup,),
+            expected_lineups=1,
+            prop_checked_at=now - timedelta(minutes=15),
+            prop_players_matched=8,
+            now=now,
+        )
+
+        self.assertFalse(any(
+            item.code in {
+                "prop_context_missing", "stale_prop_context", "thin_prop_context"
+            }
+            for item in report.findings
+        ))
+        self.assertTrue(any(
+            "Betting-market roles are fresh" in item for item in report.passed
+        ))
 
     def test_generates_unique_lineups_with_multiplier_exposure(self) -> None:
         projections = build_platform_average_projections(self.dk)

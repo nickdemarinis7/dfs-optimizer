@@ -7,7 +7,7 @@ from .classic import (
     generate_classic_3max_portfolio,
     optimize_classic_lineup,
 )
-from .single_game import OptimizedSingleGameLineup, SingleGameEntry, SingleGameOptimizationSettings, generate_single_game_3max_portfolio, generate_single_game_lineups, optimize_single_game_lineup
+from .single_game import DEFAULT_SHOWDOWN_MAX_KICKERS_AND_DEFENSES, OptimizedSingleGameLineup, SingleGameEntry, SingleGameOptimizationSettings, generate_single_game_3max_portfolio, generate_single_game_lineups, optimize_single_game_lineup
 
 __all__ = [
     "LineupEntry",
@@ -21,6 +21,7 @@ __all__ = [
     "SingleGameEntry",
     "SingleGameOptimizationSettings",
     "optimize_single_game_lineup",
+    "DEFAULT_SHOWDOWN_MAX_KICKERS_AND_DEFENSES",
     "generate_single_game_lineups",
     "generate_single_game_3max_portfolio",
 ]

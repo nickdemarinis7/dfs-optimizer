@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 import tempfile
 
 from dfs_optimizer.data_sources.nflverse import download_nflverse_season
-from dfs_optimizer.importers import apply_ownership_csv
+from dfs_optimizer.importers import (
+    apply_ownership_csv,
+    import_projections_csv,
+    match_projections,
+)
 from dfs_optimizer.models import Projection, Slate
 from dfs_optimizer.projections import (
     add_historical_ranges,
@@ -167,3 +172,55 @@ def apply_uploaded_ownership(
         handle.write(content)
         handle.flush()
         return apply_ownership_csv(slate, projections, handle.name)
+
+
+def apply_uploaded_projection_consensus(
+    slate: Slate,
+    projections: tuple[Projection, ...],
+    filename: str,
+    content: bytes,
+    *,
+    external_weight: float = .35,
+) -> tuple[tuple[Projection, ...], int]:
+    """Blend a trusted external median into the internal forecast.
+
+    The internal model remains the majority input and retains ownership,
+    sample, confidence, and opportunity metadata. External values are capped
+    to 60%-140% of the internal median before blending so a bad row or stale
+    provider value cannot dominate a lineup.
+    """
+    if not 0 <= external_weight <= .5:
+        raise ValueError("external projection weight must be between 0 and 0.5")
+    suffix = Path(filename).suffix or ".csv"
+    with tempfile.NamedTemporaryFile(suffix=suffix) as handle:
+        handle.write(content)
+        handle.flush()
+        imported = import_projections_csv(handle.name)
+    matches = match_projections(slate, imported).by_player_id
+    output = []
+    matched = 0
+    for projection in projections:
+        external = matches.get(projection.platform_id or "")
+        if external is None or external.projected_points <= 0:
+            output.append(projection)
+            continue
+        baseline = projection.projected_points
+        if baseline <= 0:
+            output.append(projection)
+            continue
+        bounded_external = min(baseline * 1.4, max(baseline * .6, external.projected_points))
+        blended = baseline * (1 - external_weight) + bounded_external * external_weight
+        factor = blended / baseline
+        scale = lambda value: value * factor if value is not None else None
+        output.append(replace(
+            projection,
+            projected_points=blended,
+            floor=scale(projection.floor),
+            ceiling=scale(projection.ceiling),
+            p10=scale(projection.p10),
+            p25=scale(projection.p25),
+            p75=scale(projection.p75),
+            p90=scale(projection.p90),
+        ))
+        matched += 1
+    return tuple(output), matched

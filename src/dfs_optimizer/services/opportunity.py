@@ -67,6 +67,21 @@ def apply_opportunity_risk(
 
         score = 65.0
         reasons = []
+        sample_size = projection.sample_size
+        limited_sample = sample_size is not None and sample_size < 3
+        if sample_size == 1:
+            score -= 20
+            reasons.append("one-game sample cannot establish a reliable role")
+        elif sample_size == 2:
+            score -= 10
+            reasons.append("two-game sample provides limited role evidence")
+        prop_count = projection.prop_market_count or 0
+        if prop_count >= 2:
+            score += 8
+            reasons.append(f"active betting markets confirm role ({prop_count} props)")
+        elif projection.prop_coverage_checked and prop_count == 0:
+            score -= 12
+            reasons.append("no player props in a well-covered game")
         stability = projection.opportunity_stability
         if stability is not None:
             if stability < .25:
@@ -87,13 +102,27 @@ def apply_opportunity_risk(
             or player.status or ""
         ).strip().upper()
         depth = context.depth_chart_position if context else None
+        expected_role = (
+            (context.expected_role or "").strip().casefold() if context else ""
+        )
+        if expected_role == "expanded":
+            score += 12
+            reasons.append("confirmed expanded pre-lock role")
+        elif expected_role == "normal":
+            reasons.append("confirmed normal pre-lock role")
+        elif expected_role == "committee":
+            score -= 12
+            reasons.append("confirmed committee pre-lock role")
+        elif expected_role == "limited":
+            score -= 30
+            reasons.append("confirmed limited or backup pre-lock role")
         if status in unavailable or (context is not None and context.active is False):
             score = 0
             reasons.append("currently unavailable")
         elif status in {"D", "DOUBTFUL", "Q", "QUESTIONABLE"}:
             score -= 12
             reasons.append(f"{status.lower()} availability")
-        if depth is not None:
+        if depth is not None and expected_role not in {"expanded", "normal"}:
             leader_confirmed = (player.team, player.primary_position) in healthy_leaders
             if player.primary_position == Position.TE and depth >= 2 and leader_confirmed:
                 score -= 22
@@ -115,6 +144,9 @@ def apply_opportunity_risk(
             reasons.append("current role checked")
 
         bust = projection.bust_probability
+        # A one- or two-game sample can mechanically produce a zero bust rate
+        # and a perfectly tight range. Do not reward those artifacts as proof
+        # of a safe weekly role.
         if bust is not None:
             if bust >= .60:
                 score -= 18
@@ -122,7 +154,7 @@ def apply_opportunity_risk(
             elif bust >= .45:
                 score -= 10
                 reasons.append("elevated modeled bust probability")
-            elif bust <= .25:
+            elif bust <= .25 and not limited_sample:
                 score += 5
                 reasons.append("low modeled bust probability")
         if projection.floor is not None and projection.projected_points > 0:

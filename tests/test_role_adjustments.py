@@ -174,6 +174,115 @@ class CurrentRoleAdjustmentTests(unittest.TestCase):
         self.assertEqual(adjusted[1].projected_points, 3)
         self.assertEqual(audit[0].depth_order, 4)
 
+    def test_confirmed_role_report_overrides_nominal_depth_chart(self) -> None:
+        players = (
+            Player("rb1", "Nominal starter", Position.RB, (Position.RB,), 7000, "GB", "CHI", "GB@CHI"),
+            Player("rb3", "Expected lead", Position.RB, (Position.RB,), 3500, "GB", "CHI", "GB@CHI"),
+        )
+        slate = Slate(Platform.DRAFTKINGS, ContestFormat.CLASSIC, players, "test")
+        projections = (
+            Projection("Nominal starter", "GB", 12, platform_id="rb1"),
+            Projection(
+                "Expected lead", "GB", 8, platform_id="rb3", floor=2,
+                ceiling=16, p10=1, p25=3, p75=11, p90=17,
+                bust_probability=.40, opportunity_stability=.20,
+            ),
+        )
+        contexts = (
+            PlayerContext(
+                "rb1", 1, None, None, True,
+                expected_role="committee", role_note="will rotate",
+            ),
+            PlayerContext(
+                "rb3", 3, None, None, True,
+                expected_role="expanded", role_note="expected lead work",
+            ),
+        )
+
+        adjusted, audit = apply_current_role_adjustments(slate, projections, contexts)
+
+        by_id = {item.platform_id: item for item in adjusted}
+        self.assertAlmostEqual(by_id["rb1"].projected_points, 10.2)
+        self.assertAlmostEqual(by_id["rb3"].projected_points, 8.8)
+        self.assertEqual(len(audit), 2)
+        self.assertTrue(all("pre-lock" in item.reason for item in audit))
+
+    def test_guardrails_severely_depressed_healthy_starter_projection(self) -> None:
+        player = Player(
+            "qb1", "Healthy starter", Position.QB, (Position.QB,),
+            10400, "WAS", "DAL", "WAS@DAL", platform_average=22.0,
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, (player,), "test"
+        )
+        projection = Projection(
+            "Healthy starter", "WAS", 7.0, platform_id="qb1",
+            floor=3.0, ceiling=14.0, p10=2.0, p25=4.0, p75=10.0, p90=15.0,
+        )
+        contexts = (PlayerContext("qb1", 1, None, None, True),)
+
+        adjusted, audit = apply_current_role_adjustments(
+            slate, (projection,), contexts
+        )
+
+        self.assertAlmostEqual(adjusted[0].projected_points, 13.2)
+        self.assertAlmostEqual(adjusted[0].ceiling, 26.4)
+        self.assertEqual(len(audit), 1)
+        self.assertIn("starter guardrail", audit[0].reason)
+
+    def test_guardrail_does_not_raise_backup_or_questionable_player(self) -> None:
+        players = (
+            Player(
+                "wr2", "Backup", Position.WR, (Position.WR,),
+                3000, "WAS", "DAL", "WAS@DAL", platform_average=10.0,
+            ),
+            Player(
+                "rb1", "Questionable starter", Position.RB, (Position.RB,),
+                7000, "DAL", "WAS", "WAS@DAL", platform_average=16.0,
+                status="Q",
+            ),
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, players, "test"
+        )
+        projections = (
+            Projection("Backup", "WAS", 3.0, platform_id="wr2"),
+            Projection("Questionable starter", "DAL", 4.0, platform_id="rb1"),
+        )
+        contexts = (
+            PlayerContext("wr2", 2, None, None, True),
+            PlayerContext("rb1", 1, "QUESTIONABLE", None, True),
+        )
+
+        adjusted, audit = apply_current_role_adjustments(
+            slate, projections, contexts
+        )
+
+        self.assertEqual(adjusted, projections)
+        self.assertEqual(audit, ())
+
+    def test_guardrail_respects_confirmed_limited_role(self) -> None:
+        player = Player(
+            "te1", "Limited starter", Position.TE, (Position.TE,),
+            5000, "LV", "NE", "LV@NE", platform_average=10.0,
+        )
+        slate = Slate(Platform.FANDUEL, ContestFormat.CLASSIC, (player,), "test")
+        projection = Projection("Limited starter", "LV", 4.0, platform_id="te1")
+        contexts = (
+            PlayerContext(
+                "te1", 1, None, None, True,
+                expected_role="limited", role_note="expected snap count",
+            ),
+        )
+
+        adjusted, audit = apply_current_role_adjustments(
+            slate, (projection,), contexts
+        )
+
+        self.assertAlmostEqual(adjusted[0].projected_points, 2.4)
+        self.assertEqual(len(audit), 1)
+        self.assertIn("limited role", audit[0].reason)
+
 
 if __name__ == "__main__":
     unittest.main()

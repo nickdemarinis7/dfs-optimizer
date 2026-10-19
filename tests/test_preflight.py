@@ -137,6 +137,54 @@ class PreflightTests(unittest.TestCase):
             for item in report.findings
         ))
 
+    def test_confirmed_expanded_role_suppresses_depth_only_warning(self) -> None:
+        tight_end = next(
+            entry.player for entry in self.lineups[0].entries
+            if entry.player.primary_position.value == "TE"
+        )
+        now = datetime.now(timezone.utc)
+
+        report = preflight_lineups(
+            self.slate,
+            self.projections,
+            (self.lineups[0], self.lineups[0]),
+            expected_lineups=2,
+            player_context=(PlayerContext(
+                tight_end.platform_id, 2, None, None, True,
+                expected_role="expanded", role_note="starter will be limited",
+            ),),
+            player_context_built_at=now,
+            now=now,
+        )
+
+        self.assertFalse(any(
+            item.code == "subordinate_skill_exposure"
+            for item in report.findings
+        ))
+
+    def test_unavailable_player_conflicting_with_expanded_report_blocks(self) -> None:
+        player = self.lineups[0].entries[0].player
+        now = datetime.now(timezone.utc)
+
+        report = preflight_lineups(
+            self.slate,
+            self.projections,
+            self.lineups,
+            expected_lineups=1,
+            player_context=(PlayerContext(
+                player.platform_id, 1, "OUT", None, False,
+                expected_role="expanded", role_note="old report",
+            ),),
+            player_context_built_at=now,
+            now=now,
+        )
+
+        self.assertTrue(report.blocking)
+        self.assertTrue(any(
+            item.code == "role_report_availability_conflict"
+            for item in report.findings
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()

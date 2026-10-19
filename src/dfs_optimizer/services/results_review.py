@@ -45,6 +45,10 @@ class WinnerStrategyBand:
     qb_stack_rate: float | None
     bring_back_rate: float | None
     double_te_rate: float | None
+    average_quarterbacks: float | None
+    average_kickers_and_defenses: float | None
+    average_max_team_players: float | None
+    receiver_multiplier_qb_pair_rate: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,6 +313,25 @@ def analyze_winner_strategies(content: bytes, filename: str, slate) -> WinnerStr
         ownership_complete = all(value is not None for value in ownerships)
         positions = [player.primary_position.value for _, player in matched]
         quarterbacks = [player for _, player in matched if player.primary_position.value == "QB"]
+        kickers_and_defenses = sum(
+            player.primary_position.value in {"K", "DST"}
+            for _, player in matched
+        )
+        team_counts = Counter(player.team for _, player in matched)
+        multiplier_player = next(
+            (player for role, player in matched if role in {"CPT", "MVP"}),
+            None,
+        )
+        receiver_multiplier_qb_pair = None
+        if (
+            slate.contest_format == ContestFormat.SINGLE_GAME
+            and multiplier_player is not None
+            and multiplier_player.primary_position.value in {"WR", "TE"}
+        ):
+            receiver_multiplier_qb_pair = any(
+                quarterback.team == multiplier_player.team
+                for quarterback in quarterbacks
+            )
         qb_stack = bring_back = None
         if slate.contest_format == ContestFormat.CLASSIC and quarterbacks:
             qb_stack = any(
@@ -342,6 +365,10 @@ def analyze_winner_strategies(content: bytes, filename: str, slate) -> WinnerStr
             "qb_stack": qb_stack,
             "bring_back": bring_back,
             "double_te": positions.count("TE") >= 2,
+            "quarterbacks": len(quarterbacks),
+            "kickers_and_defenses": kickers_and_defenses,
+            "max_team_players": max(team_counts.values()) if team_counts else None,
+            "receiver_multiplier_qb_pair": receiver_multiplier_qb_pair,
         })
 
     winning_score = max(float(row["Points"]) for row in scored)
@@ -385,6 +412,14 @@ def analyze_winner_strategies(content: bytes, filename: str, slate) -> WinnerStr
             qb_stack_rate=average_optional("qb_stack"),
             bring_back_rate=average_optional("bring_back"),
             double_te_rate=average_optional("double_te"),
+            average_quarterbacks=average_optional("quarterbacks"),
+            average_kickers_and_defenses=average_optional(
+                "kickers_and_defenses"
+            ),
+            average_max_team_players=average_optional("max_team_players"),
+            receiver_multiplier_qb_pair_rate=average_optional(
+                "receiver_multiplier_qb_pair"
+            ),
         ))
     return WinnerStrategyReport(field_size, winning_score, winners, tuple(bands))
 

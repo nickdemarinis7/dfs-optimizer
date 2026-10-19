@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from pathlib import Path
 import csv
 import io
 import re
@@ -9,6 +10,7 @@ import unicodedata
 from zoneinfo import ZoneInfo
 
 from dfs_optimizer.data_sources.sleeper import load_sleeper_players
+from dfs_optimizer.data_sources.nflverse import download_nflverse_current_context
 from dfs_optimizer.models import Position, Slate
 
 
@@ -23,6 +25,9 @@ class PlayerContext:
     practice_participation: str | None
     active: bool | None
     verified_projection: float | None = None
+    expected_role: str | None = None
+    role_note: str | None = None
+    injury_reported: bool = False
 
     @property
     def role_label(self) -> str:
@@ -61,7 +66,9 @@ def verified_player_context_ids(
         or item.depth_chart_position is not None
         or bool((item.injury_status or "").strip())
         or bool((item.practice_participation or "").strip())
+        or item.injury_reported
         or item.verified_projection is not None
+        or bool((item.expected_role or "").strip())
     )
 
 
@@ -84,13 +91,138 @@ def fetch_player_context(
     *,
     refresh: bool = False,
     max_age_hours: float = 12,
+    season: int | None = None,
 ) -> tuple[PlayerContext, ...]:
-    return match_player_context(
+    sleeper_context = match_player_context(
         slate,
         load_sleeper_players(
             cache_dir, refresh=refresh, max_age_hours=max_age_hours
         ),
     )
+    current_season = season or (
+        date.today().year if date.today().month >= 3 else date.today().year - 1
+    )
+    try:
+        paths = _current_nflverse_context_paths(
+            current_season, cache_dir, refresh=refresh, max_age_hours=max_age_hours
+        )
+        nflverse_context = match_nflverse_player_context(
+            slate, paths["depth_charts"], paths["injuries"]
+        )
+    except (OSError, ValueError):
+        return sleeper_context
+    return merge_player_context_sources(sleeper_context, nflverse_context)
+
+
+def merge_player_context_sources(
+    primary: tuple[PlayerContext, ...],
+    secondary: tuple[PlayerContext, ...],
+) -> tuple[PlayerContext, ...]:
+    """Merge current sources while preserving manual-only context fields."""
+    merged = {item.platform_id: item for item in primary}
+    for item in secondary:
+        current = merged.get(item.platform_id)
+        if current is None:
+            merged[item.platform_id] = item
+            continue
+        merged[item.platform_id] = PlayerContext(
+            item.platform_id,
+            item.depth_chart_position or current.depth_chart_position,
+            item.injury_status if item.injury_reported else current.injury_status,
+            (
+                item.practice_participation
+                if item.injury_reported
+                else current.practice_participation
+            ),
+            current.active if current.active is not None else item.active,
+            current.verified_projection,
+            current.expected_role,
+            current.role_note,
+            current.injury_reported or item.injury_reported,
+        )
+    return tuple(merged.values())
+
+
+def match_nflverse_player_context(
+    slate: Slate, depth_path: str | Path, injury_path: str | Path
+) -> tuple[PlayerContext, ...]:
+    """Match the freshest free nflverse depth and injury records to a slate."""
+    players_by_key = {
+        (_normalize(player.name), TEAM_ALIASES.get(player.team, player.team)): player
+        for player in slate.players
+    }
+    depth_rows: dict[tuple[str, str], tuple[str, int]] = {}
+    with Path(depth_path).open(newline="", encoding="utf-8-sig") as handle:
+        for row in csv.DictReader(handle):
+            key = (
+                _normalize(row.get("player_name") or ""),
+                TEAM_ALIASES.get((row.get("team") or "").upper(), (row.get("team") or "").upper()),
+            )
+            try:
+                rank = int(float(row.get("pos_rank") or ""))
+            except ValueError:
+                continue
+            timestamp = row.get("dt") or ""
+            if key in players_by_key and (key not in depth_rows or timestamp >= depth_rows[key][0]):
+                depth_rows[key] = (timestamp, rank)
+
+    injury_rows: dict[tuple[str, str], tuple[int, str, str | None, str | None]] = {}
+    with Path(injury_path).open(newline="", encoding="utf-8-sig") as handle:
+        for row in csv.DictReader(handle):
+            key = (
+                _normalize(row.get("full_name") or ""),
+                TEAM_ALIASES.get((row.get("team") or "").upper(), (row.get("team") or "").upper()),
+            )
+            try:
+                week = int(row.get("week") or 0)
+            except ValueError:
+                continue
+            candidate = (
+                week,
+                row.get("date_modified") or "",
+                _text(row.get("report_status")),
+                _text(row.get("practice_status")),
+            )
+            if key in players_by_key and (
+                key not in injury_rows or candidate[:2] >= injury_rows[key][:2]
+            ):
+                injury_rows[key] = candidate
+
+    contexts = []
+    for key, player in players_by_key.items():
+        depth = depth_rows.get(key)
+        injury = injury_rows.get(key)
+        if depth is None and injury is None:
+            continue
+        contexts.append(PlayerContext(
+            player.platform_id,
+            depth[1] if depth else None,
+            injury[2] if injury else None,
+            injury[3] if injury else None,
+            None,
+            injury_reported=injury is not None,
+        ))
+    return tuple(contexts)
+
+
+def _current_nflverse_context_paths(
+    season: int,
+    cache_dir: str | Path,
+    *,
+    refresh: bool,
+    max_age_hours: float,
+) -> dict[str, Path]:
+    root = Path(cache_dir)
+    paths = {
+        "depth_charts": root / f"depth_charts_{season}.csv",
+        "injuries": root / f"injuries_{season}.csv",
+    }
+    now = datetime.now(timezone.utc).timestamp()
+    stale = any(
+        not path.is_file() or (now - path.stat().st_mtime) / 3600 > max_age_hours
+        for path in paths.values()
+    )
+    return download_nflverse_current_context(season, cache_dir) if refresh or stale else paths
 
 
 def import_player_context_csv(
@@ -100,7 +232,9 @@ def import_player_context_csv(
 
     Required columns are ``name`` and ``team``. Optional columns are
     ``status``, ``depth_chart_position``, ``active``, and
-    ``practice_participation`` and ``verified_projection``. Rows must match exactly one slate player so a
+    ``practice_participation``, ``verified_projection``, ``expected_role``, and
+    ``role_note``. Expected role may be ``expanded``, ``normal``, ``committee``,
+    or ``limited``. Rows must match exactly one slate player so a
     similarly named player cannot silently receive somebody else's status.
     """
     text = content.decode("utf-8-sig") if isinstance(content, bytes) else content
@@ -162,6 +296,12 @@ def import_player_context_csv(
             raise ValueError(
                 f"player-context row {row_number} verified projection must be positive"
             )
+        expected_role = (_text(row.get("expected_role")) or "").casefold() or None
+        if expected_role not in {None, "expanded", "normal", "committee", "limited"}:
+            raise ValueError(
+                f"player-context row {row_number} expected role must be expanded, "
+                "normal, committee, limited, or blank"
+            )
         contexts.append(PlayerContext(
             platform_id=player.platform_id,
             depth_chart_position=depth,
@@ -169,6 +309,12 @@ def import_player_context_csv(
             practice_participation=_text(row.get("practice_participation")),
             active=active,
             verified_projection=verified_projection,
+            expected_role=expected_role,
+            role_note=_text(row.get("role_note")),
+            injury_reported=bool(
+                _text(row.get("status"))
+                or _text(row.get("practice_participation"))
+            ),
         ))
     if unmatched:
         preview = ", ".join(unmatched[:5])
@@ -190,10 +336,12 @@ def player_context_csv_template(slate: Slate) -> bytes:
         "name", "team", "status", "depth_chart_position", "active",
         "practice_participation",
         "verified_projection",
+        "expected_role",
+        "role_note",
     ))
     for player in sorted(slate.players, key=lambda item: (item.team, item.name)):
         writer.writerow((
-            player.name, player.team, player.status or "", "", "", "", "",
+            player.name, player.team, player.status or "", "", "", "", "", "", "",
         ))
     return output.getvalue().encode()
 
@@ -337,6 +485,10 @@ def match_player_context(
             injury_status=_text(record.get("injury_status")),
             practice_participation=_text(record.get("practice_participation")),
             active=record.get("active") if isinstance(record.get("active"), bool) else None,
+            injury_reported=bool(
+                _text(record.get("injury_status"))
+                or _text(record.get("practice_participation"))
+            ),
         ))
     return tuple(contexts)
 

@@ -107,9 +107,9 @@ if results_file is not None:
             "as separate strategies. Use repeated patterns across slates as evidence; "
             "do not treat one winner as a new hard rule."
         )
-        st.dataframe(
-            pd.DataFrame([
-                {
+        strategy_rows = []
+        for band in strategy_report.bands:
+            row = {
                     "Finish band": band.label,
                     "Unique lineups": band.unique_lineups,
                     "Average score": band.average_score,
@@ -117,12 +117,25 @@ if results_file is not None:
                     "Average salary left": band.average_salary_left,
                     "Average player ownership": band.average_ownership,
                     "Average sub-5% plays": band.average_low_owned_players,
+            }
+            if slate.contest_format == ContestFormat.SINGLE_GAME:
+                row.update({
+                    "Average QBs": band.average_quarterbacks,
+                    "Average K/DST": band.average_kickers_and_defenses,
+                    "Average max team players": band.average_max_team_players,
+                    "Receiver multiplier + QB rate": (
+                        band.receiver_multiplier_qb_pair_rate
+                    ),
+                })
+            else:
+                row.update({
                     "QB stack rate": band.qb_stack_rate,
                     "Bring-back rate": band.bring_back_rate,
                     "Double-TE rate": band.double_te_rate,
-                }
-                for band in strategy_report.bands
-            ]),
+                })
+            strategy_rows.append(row)
+        st.dataframe(
+            pd.DataFrame(strategy_rows),
             column_config={
                 "Average score": st.column_config.NumberColumn(format="%.2f"),
                 "Average duplicates": st.column_config.NumberColumn(format="%.1f"),
@@ -132,6 +145,12 @@ if results_file is not None:
                 "QB stack rate": st.column_config.NumberColumn(format="percent"),
                 "Bring-back rate": st.column_config.NumberColumn(format="percent"),
                 "Double-TE rate": st.column_config.NumberColumn(format="percent"),
+                "Average QBs": st.column_config.NumberColumn(format="%.2f"),
+                "Average K/DST": st.column_config.NumberColumn(format="%.2f"),
+                "Average max team players": st.column_config.NumberColumn(format="%.2f"),
+                "Receiver multiplier + QB rate": st.column_config.NumberColumn(
+                    format="percent"
+                ),
             },
             hide_index=True,
             width="stretch",

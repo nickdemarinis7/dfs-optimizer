@@ -104,6 +104,10 @@ report = preflight_lineups(
     salary_loaded_at=st.session_state.get("salary_loaded_at"),
     player_context=tuple(st.session_state.get("player_context", ())),
     player_context_built_at=st.session_state.get("player_context_built_at"),
+    prop_checked_at=st.session_state.get("nfl_prop_checked_at"),
+    prop_players_matched=sum(
+        bool(item.prop_market_count) for item in projections
+    ),
 )
 audit = report.findings
 stale = (

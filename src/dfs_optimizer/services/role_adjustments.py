@@ -36,6 +36,18 @@ def apply_current_role_adjustments(
     median is reduced only when recent opportunity or snap evidence also shows
     a material role decline. The risk layer may still flag and cap exposure to
     a deep player whose median is left unchanged here.
+
+    A structured pre-lock role report takes precedence over nominal depth
+    order. The adjustment remains bounded: expanded workload raises the
+    distribution 10%, committee usage lowers it 15%, and a clearly limited
+    role lowers it 40%. ``normal`` suppresses a stale chart penalty without
+    changing the projection.
+
+    Finally, a healthy QB/RB/WR/TE listed first on the current depth chart is
+    protected from an extreme historical-data collapse. When that player's
+    median falls below 50% of the platform's slate average, the distribution
+    is scaled to a conservative 60% floor. Questionable, limited, and
+    committee players are deliberately excluded from this safeguard.
     """
     if slate.sport != Sport.NFL or not contexts:
         return projections, ()
@@ -90,6 +102,22 @@ def apply_current_role_adjustments(
         if context is None or projection is None:
             continue
         depth = context.depth_chart_position or 0
+        expected_role = (context.expected_role or "").strip().casefold()
+        if expected_role:
+            role_factors = {
+                "expanded": 1.10,
+                "normal": 1.0,
+                "committee": .85,
+                "limited": .60,
+            }
+            factor = role_factors[expected_role]
+            note = f": {context.role_note}" if context.role_note else ""
+            factors[player.platform_id] = (
+                factor,
+                f"confirmed pre-lock {expected_role} role{note}",
+                depth,
+            )
+            continue
         if (player.team, player.primary_position) not in healthy_leaders:
             continue
         deep_skill_role = player.primary_position == Position.TE and depth >= 2
@@ -185,4 +213,59 @@ def apply_current_role_adjustments(
             adjusted_projection=updated.projected_points,
             reason=reason,
         ))
-    return tuple(adjusted), tuple(audit)
+    guarded: list[Projection] = []
+    uncertain = {"Q", "QUESTIONABLE", "D", "DOUBTFUL"}
+    guardrail_positions = {Position.QB, Position.RB, Position.WR, Position.TE}
+    for projection in adjusted:
+        platform_id = projection.platform_id or ""
+        player = player_by_id.get(platform_id)
+        context = context_by_id.get(platform_id)
+        if player is None or context is None:
+            guarded.append(projection)
+            continue
+        status = (context.injury_status or player.status or "").strip().upper()
+        expected_role = (context.expected_role or "").strip().casefold()
+        platform_average = player.platform_average or 0.0
+        eligible = (
+            player.primary_position in guardrail_positions
+            and context.depth_chart_position == 1
+            and context.active is not False
+            and status not in unavailable | uncertain
+            and expected_role not in {"committee", "limited"}
+            and platform_average > 0
+            and projection.projected_points > 0
+        )
+        trigger = platform_average * .50
+        if not eligible or projection.projected_points >= trigger:
+            guarded.append(projection)
+            continue
+
+        target = platform_average * .60
+        factor = target / projection.projected_points
+        scale = lambda value: value * factor if value is not None else None
+        updated = replace(
+            projection,
+            projected_points=target,
+            floor=scale(projection.floor),
+            ceiling=scale(projection.ceiling),
+            p10=scale(projection.p10),
+            p25=scale(projection.p25),
+            p75=scale(projection.p75),
+            p90=scale(projection.p90),
+        )
+        guarded.append(updated)
+        audit.append(RoleAdjustment(
+            platform_id=player.platform_id,
+            player=player.name,
+            team=player.team,
+            position=player.primary_position.value,
+            depth_order=1,
+            factor=factor,
+            original_projection=projection.projected_points,
+            adjusted_projection=updated.projected_points,
+            reason=(
+                "healthy depth-chart starter guardrail: projection was below "
+                "50% of the platform slate average"
+            ),
+        ))
+    return tuple(guarded), tuple(audit)

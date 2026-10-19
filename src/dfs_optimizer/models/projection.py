@@ -24,6 +24,8 @@ class Projection:
     confidence_score: float | None = None
     confidence_tier: str | None = None
     confidence_reasons: tuple[str, ...] = ()
+    prop_market_count: int | None = None
+    prop_coverage_checked: bool = False
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -72,6 +74,8 @@ class Projection:
             raise ValueError(f"sample size cannot be negative for {self.name}")
         if self.data_age_periods is not None and self.data_age_periods < 0:
             raise ValueError(f"data age cannot be negative for {self.name}")
+        if self.prop_market_count is not None and self.prop_market_count < 0:
+            raise ValueError(f"prop market count cannot be negative for {self.name}")
         if self.opportunity_stability is not None and not 0 <= self.opportunity_stability <= 1:
             raise ValueError(f"opportunity stability must be between 0 and 1 for {self.name}")
         if self.confidence_score is not None and not 0 <= self.confidence_score <= 100:
