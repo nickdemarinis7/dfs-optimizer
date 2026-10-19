@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from dfs_optimizer.models import Position, Projection, Slate, Sport
+from dfs_optimizer.models import Player, Position, Projection, Slate, Sport
 
 from .player_context import PlayerContext
 
@@ -48,6 +48,11 @@ def apply_current_role_adjustments(
     median falls below 50% of the platform's slate average, the distribution
     is scaled to a conservative 60% floor. Questionable, limited, and
     committee players are deliberately excluded from this safeguard.
+
+    When a higher-usage running back is unavailable, the first healthy reserve
+    is instead given a conservative floor of 70% of his own platform average.
+    This captures a newly expanded committee role without projecting the
+    reserve as a full replacement for the missing starter.
     """
     if slate.sport != Sport.NFL or not contexts:
         return projections, ()
@@ -91,6 +96,55 @@ def apply_current_role_adjustments(
                 candidates.append(player)
         if candidates:
             replacement_qb_ids.add(min(
+                candidates,
+                key=lambda player: context_by_id[player.platform_id].depth_chart_position or 99,
+            ).platform_id)
+
+    # An unavailable lead back can make a previously modest historical sample
+    # misleading. Depth feeds sometimes omit the unavailable player entirely,
+    # so also use the salary file's status and platform average to identify the
+    # higher-usage back. Only the first healthy reserve is raised, and only to
+    # 70% of his own platform average to preserve committee uncertainty.
+    replacement_rb_ids: set[str] = set()
+    unavailable_rbs_by_team: dict[str, list[Player]] = {}
+    for player in slate.players:
+        context = context_by_id.get(player.platform_id)
+        status = (
+            context.injury_status if context and context.injury_status else player.status
+        )
+        if (
+            player.primary_position == Position.RB
+            and (status or "").strip().upper() in unavailable
+        ):
+            unavailable_rbs_by_team.setdefault(player.team, []).append(player)
+    for team, unavailable_backs in unavailable_rbs_by_team.items():
+        candidates = []
+        for player in slate.players:
+            context = context_by_id.get(player.platform_id)
+            status = (
+                context.injury_status if context and context.injury_status else player.status
+            )
+            expected_role = (
+                (context.expected_role or "").strip().casefold() if context else ""
+            )
+            if (
+                player.team == team
+                and player.primary_position == Position.RB
+                and context is not None
+                and (context.depth_chart_position or 1) > 1
+                and context.active is not False
+                and (status or "").strip().upper() not in unavailable
+                and not expected_role
+                and (player.platform_average or 0) >= 5
+                and player.platform_id in projection_by_id
+                and any(
+                    (back.platform_average or 0) > (player.platform_average or 0)
+                    for back in unavailable_backs
+                )
+            ):
+                candidates.append(player)
+        if candidates:
+            replacement_rb_ids.add(min(
                 candidates,
                 key=lambda player: context_by_id[player.platform_id].depth_chart_position or 99,
             ).platform_id)
@@ -180,6 +234,37 @@ def apply_current_role_adjustments(
                 reason="replacement QB behind an unavailable QB1",
             ))
             continue
+        if projection.platform_id in replacement_rb_ids:
+            player = player_by_id[projection.platform_id]
+            target = max(
+                projection.projected_points,
+                (player.platform_average or 0) * .70,
+            )
+            factor = target / projection.projected_points
+            scale = lambda value: value * factor if value is not None else None
+            updated = replace(
+                projection,
+                projected_points=target,
+                floor=scale(projection.floor),
+                ceiling=scale(projection.ceiling),
+                p10=scale(projection.p10),
+                p25=scale(projection.p25),
+                p75=scale(projection.p75),
+                p90=scale(projection.p90),
+            )
+            adjusted.append(updated)
+            audit.append(RoleAdjustment(
+                platform_id=player.platform_id,
+                player=player.name,
+                team=player.team,
+                position=player.primary_position.value,
+                depth_order=context_by_id[player.platform_id].depth_chart_position or 2,
+                factor=factor,
+                original_projection=projection.projected_points,
+                adjusted_projection=updated.projected_points,
+                reason="next healthy RB behind a higher-usage unavailable back",
+            ))
+            continue
         detail = factors.get(projection.platform_id or "")
         if detail is None:
             adjusted.append(projection)
@@ -226,12 +311,14 @@ def apply_current_role_adjustments(
         status = (context.injury_status or player.status or "").strip().upper()
         expected_role = (context.expected_role or "").strip().casefold()
         platform_average = player.platform_average or 0.0
+        minimum_starter_average = 5.0 if player.primary_position == Position.RB else 0.0
         eligible = (
             player.primary_position in guardrail_positions
             and context.depth_chart_position == 1
             and context.active is not False
             and status not in unavailable | uncertain
             and expected_role not in {"committee", "limited"}
+            and platform_average >= minimum_starter_average
             and platform_average > 0
             and projection.projected_points > 0
         )

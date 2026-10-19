@@ -283,6 +283,69 @@ class CurrentRoleAdjustmentTests(unittest.TestCase):
         self.assertEqual(len(audit), 1)
         self.assertIn("limited role", audit[0].reason)
 
+    def test_promotes_next_running_back_when_higher_usage_back_is_out(self) -> None:
+        players = (
+            Player(
+                "rb1", "Unavailable lead", Position.RB, (Position.RB,),
+                7000, "WAS", "SF", "WAS@SF", platform_average=9.0,
+                status="IR",
+            ),
+            Player(
+                "rb2", "Committee replacement", Position.RB, (Position.RB,),
+                6600, "WAS", "SF", "WAS@SF", platform_average=8.3,
+            ),
+            Player(
+                "rb3", "Passing-down back", Position.RB, (Position.RB,),
+                3600, "WAS", "SF", "WAS@SF", platform_average=3.7,
+            ),
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, players, "test"
+        )
+        projections = (
+            Projection(
+                "Committee replacement", "WAS", 2.16, platform_id="rb2",
+                floor=1.2, ceiling=4.2, p10=1.0, p25=1.2, p75=3.1, p90=4.2,
+            ),
+            Projection("Passing-down back", "WAS", 3.2, platform_id="rb3"),
+        )
+        contexts = (
+            PlayerContext("rb2", 2, None, "Limited Participation", True),
+            PlayerContext("rb3", 3, None, "Limited Participation", True),
+        )
+
+        adjusted, audit = apply_current_role_adjustments(
+            slate, projections, contexts
+        )
+
+        by_id = {item.platform_id: item for item in adjusted}
+        self.assertAlmostEqual(by_id["rb2"].projected_points, 5.81)
+        self.assertAlmostEqual(by_id["rb2"].ceiling, 4.2 * (5.81 / 2.16))
+        self.assertEqual(by_id["rb3"].projected_points, 3.2)
+        self.assertEqual(len(audit), 1)
+        self.assertIn("unavailable back", audit[0].reason)
+
+    def test_does_not_guardrail_low_volume_fullback_listed_first(self) -> None:
+        player = Player(
+            "fb1", "Starting fullback", Position.RB, (Position.RB,),
+            1400, "SF", "WAS", "WAS@SF", platform_average=3.9,
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, (player,), "test"
+        )
+        projection = Projection(
+            "Starting fullback", "SF", .94, platform_id="fb1",
+            floor=.2, ceiling=3.4,
+        )
+        contexts = (PlayerContext("fb1", 1, None, None, True),)
+
+        adjusted, audit = apply_current_role_adjustments(
+            slate, (projection,), contexts
+        )
+
+        self.assertEqual(adjusted, (projection,))
+        self.assertEqual(audit, ())
+
 
 if __name__ == "__main__":
     unittest.main()
