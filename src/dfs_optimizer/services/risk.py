@@ -265,5 +265,11 @@ def suggest_max_once_player_ids(
         )
         and (projection := by_id.get(player.platform_id)) is not None
         and projection.projected_points < 12
+        and (
+            (projection.opportunity_stability or 0) < .70
+            or (projection.bust_probability or 0) >= .35
+            or projection.floor is None
+            or projection.floor <= projection.projected_points * .40
+        )
     )
     return frozenset(suggestions)

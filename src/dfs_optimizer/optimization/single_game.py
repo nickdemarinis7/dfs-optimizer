@@ -147,13 +147,16 @@ def generate_single_game_3max_portfolio(
     settings: SingleGameOptimizationSettings,
     minimum_unique_players: int = 2,
     candidate_count: int = 24,
-    maximum_median_spread: float = 15.0,
+    maximum_median_spread: float = 20.0,
 ) -> tuple[OptimizedSingleGameLineup, ...]:
     """Select two balanced builds and one highest-ceiling build jointly."""
     balanced_settings = replace(settings, ceiling_weight=0.30)
     ceiling_settings = replace(settings, ceiling_weight=0.70)
     candidates_by_key = {}
     for candidate_settings in (balanced_settings, ceiling_settings):
+        unrestricted_settings = replace(
+            candidate_settings, limited_player_ids=frozenset()
+        )
         for lineup in generate_single_game_lineups(
             slate,
             projection_matches,
@@ -161,13 +164,55 @@ def generate_single_game_3max_portfolio(
             minimum_unique_players=1,
             maximum_player_exposure=0.50,
             maximum_multiplier_exposure=0.34,
-            settings=replace(candidate_settings, limited_player_ids=frozenset()),
+            settings=unrestricted_settings,
         ):
             key = (
                 lineup.entries[0].player.platform_id,
                 frozenset(entry.player.platform_id for entry in lineup.entries),
             )
             candidates_by_key.setdefault(key, lineup)
+        # Sequential candidate generation tends to spend every elite player in
+        # the same early lineups. Add the best build for each eligible Captain
+        # so the joint solver can distribute the core across three genuinely
+        # competitive constructions instead of inheriting that ordering bias.
+        candidate_player_ids = {
+            player.platform_id
+            for player in slate.players
+            if player.platform_id in projection_matches.by_player_id
+        }
+        core_ids = tuple(
+            player_id
+            for player_id, _ in sorted(
+                projection_matches.by_player_id.items(),
+                key=lambda item: item[1].projected_points,
+                reverse=True,
+            )[:4]
+        )
+        for captain_id in candidate_player_ids:
+            exclusion_variants = (None,) + tuple(
+                player_id for player_id in core_ids if player_id != captain_id
+            )
+            for excluded_core_id in exclusion_variants:
+                try:
+                    lineup = _optimize_single_game_lineup(
+                        slate,
+                        projection_matches,
+                        None,
+                        (),
+                        (
+                            frozenset({excluded_core_id})
+                            if excluded_core_id else frozenset()
+                        ),
+                        frozenset(candidate_player_ids - {captain_id}),
+                        settings=unrestricted_settings,
+                    )
+                except LineupOptimizationError:
+                    continue
+                key = (
+                    lineup.entries[0].player.platform_id,
+                    frozenset(entry.player.platform_id for entry in lineup.entries),
+                )
+                candidates_by_key.setdefault(key, lineup)
     candidates = tuple(candidates_by_key.values())
     if len(candidates) < 3:
         raise LineupOptimizationError("not enough Showdown candidates for a 3-max portfolio")

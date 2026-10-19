@@ -1075,6 +1075,7 @@ if generate_clicked:
                 "Confirm the final CFB availability and starting-quarterback check before generating."
             )
         generation_warning = None
+        quality_scenario_analysis = ()
         live_context = player_context
         live_age = context_age_minutes()
         if slate.sport == Sport.NFL and (live_age is None or live_age > 15):
@@ -1300,6 +1301,22 @@ if generate_clicked:
                     f"Only {len(lineups)} of {lineup_count} requested lineups could satisfy these settings. "
                     "Try raising exposure or lowering uniqueness."
                 )
+            if slate.contest_format == ContestFormat.SINGLE_GAME and lineup_count > 1:
+                quality_scenario_analysis = simulate_lineups(
+                    lineups, simulations=1_000
+                )
+                best_p90 = max(item.p90 for item in quality_scenario_analysis)
+                competitive = sum(
+                    item.p90 >= best_p90 * .80
+                    for item in quality_scenario_analysis
+                )
+                if competitive != lineup_count:
+                    raise RuntimeError(
+                        f"Only {competitive} of {lineup_count} lineups met the "
+                        "portfolio upside floor. Raise maximum player exposure "
+                        "or lower uniqueness so the optimizer can share more of "
+                        "the strongest core across lineups."
+                    )
             if slate.sport == Sport.CFB:
                 selected_player_ids = {
                     entry.player.platform_id
@@ -1332,7 +1349,7 @@ if generate_clicked:
                     )
             status.update(label="Portfolio ready", state="complete", expanded=False)
         lineup_settings = {
-            "strategy_version": "tournament-defaults-v4",
+            "strategy_version": "tournament-defaults-v5",
             "projection_model_version": (
                 st.session_state.get("projection_key", (None,))[0]
                 if st.session_state.get("projection_key") else None
@@ -1487,7 +1504,10 @@ if generate_clicked:
                 "minimum_multiplier_ceiling": 18,
                 "minimum_quarterbacks": 1,
             })
-        scenario_analysis = simulate_lineups(lineups)
+        scenario_analysis = (
+            quality_scenario_analysis
+            if quality_scenario_analysis else simulate_lineups(lineups)
+        )
         lineup_settings["scenario_analysis"] = [
             {
                 "lineup_number": item.lineup_number,
@@ -1499,6 +1519,8 @@ if generate_clicked:
             }
             for item in scenario_analysis
         ]
+        if slate.contest_format == ContestFormat.SINGLE_GAME:
+            lineup_settings["minimum_portfolio_p90_ratio"] = .80
         created_at = datetime.now(timezone.utc)
         run_id = (
             f"{created_at:%Y%m%dT%H%M%SZ}-{slate.platform.value}-"

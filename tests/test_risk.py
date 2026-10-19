@@ -226,6 +226,50 @@ class PortfolioRiskTests(unittest.TestCase):
 
         self.assertNotIn(player.platform_id, suggestions)
 
+    def test_stable_slot_receiver_is_not_limited_by_flat_depth_number(self) -> None:
+        player = Player(
+            "slot", "Starting Slot Receiver", Position.WR,
+            (Position.WR, Position.FLEX), 4200, "WAS", "SF", "WAS@SF",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, (player,), "test",
+            Sport.NFL,
+        )
+        projection = Projection(
+            player.name, player.team, 8.6, platform_id=player.platform_id,
+            floor=6.0, ceiling=14.5, bust_probability=.20,
+            opportunity_stability=1.0,
+        )
+        context = PlayerContext("slot", 3, None, None, True)
+
+        suggestions = suggest_max_once_player_ids(
+            slate, (projection,), (context,)
+        )
+
+        self.assertNotIn(player.platform_id, suggestions)
+
+    def test_unstable_deep_receiver_remains_max_once(self) -> None:
+        player = Player(
+            "reserve", "Reserve Receiver", Position.WR,
+            (Position.WR, Position.FLEX), 3200, "WAS", "SF", "WAS@SF",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, (player,), "test",
+            Sport.NFL,
+        )
+        projection = Projection(
+            player.name, player.team, 5.8, platform_id=player.platform_id,
+            floor=1.9, ceiling=12.5, bust_probability=.38,
+            opportunity_stability=.55,
+        )
+        context = PlayerContext("reserve", 4, None, None, True)
+
+        suggestions = suggest_max_once_player_ids(
+            slate, (projection,), (context,)
+        )
+
+        self.assertIn(player.platform_id, suggestions)
+
     def test_cfb_fragile_skill_player_is_suggested_max_once(self) -> None:
         player = Player(
             "fragile", "Fragile Receiver", Position.WR,
