@@ -197,7 +197,11 @@ with st.container(border=True):
     simulation_metrics = st.columns(2)
     simulation_metrics[0].metric("Simulated P90", f"{lineup_scenario.p90:.2f}")
     simulation_metrics[1].metric(
-        "Portfolio lead rate", f"{lineup_scenario.top_rate:.1%}"
+        "Portfolio-best rate", f"{lineup_scenario.top_rate:.1%}",
+        help=(
+            "How often this lineup scores highest among only the lineups in "
+            "this generated portfolio. It is not a contest win probability."
+        ),
     )
     st.dataframe(pd.DataFrame([{
         "Slot": entry.slot,
@@ -291,7 +295,8 @@ with exposure_tab:
 with simulation_tab:
     st.caption(
         "Two thousand correlated simulations estimate upside and how often each "
-        "lineup leads this portfolio; they are ranges, not guarantees."
+        "lineup leads only this generated portfolio. These rates are not full-field "
+        "contest win probabilities."
     )
     st.dataframe(
         pd.DataFrame([
@@ -301,7 +306,7 @@ with simulation_tab:
                 "Mean": item.mean,
                 "P75": item.p75,
                 "P90": item.p90,
-                "Lead rate": item.top_rate,
+                "Portfolio-best rate": item.top_rate,
             }
             for item in scenario_analysis
         ]),
@@ -309,7 +314,10 @@ with simulation_tab:
             "Mean": st.column_config.NumberColumn(format="%.2f"),
             "P75": st.column_config.NumberColumn(format="%.2f"),
             "P90": st.column_config.NumberColumn(format="%.2f"),
-            "Lead rate": st.column_config.NumberColumn(format="percent"),
+            "Portfolio-best rate": st.column_config.NumberColumn(
+                format="percent",
+                help="Best within this generated portfolio, not the full contest field.",
+            ),
         },
         hide_index=True,
         width="stretch",

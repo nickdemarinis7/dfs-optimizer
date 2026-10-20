@@ -45,17 +45,37 @@ def simulate_lineups(
         rush_factors = {
             player.team: randomizer.gauss(0, 1) for player, _ in players.values()
         }
+        script_factors = {}
+        for player, _ in players.values():
+            if player.team in script_factors:
+                continue
+            factor = randomizer.gauss(0, 1)
+            script_factors[player.team] = factor
+            script_factors.setdefault(player.opponent, -factor)
+        receiver_ids_by_team = {}
+        for player_id, (player, _) in players.items():
+            if player.primary_position in {Position.WR, Position.TE}:
+                receiver_ids_by_team.setdefault(player.team, []).append(player_id)
+        receiver_share_factors = {}
+        for player_ids in receiver_ids_by_team.values():
+            raw = [randomizer.gauss(0, 1) for _ in player_ids]
+            average = sum(raw) / len(raw)
+            receiver_share_factors.update({
+                player_id: value - average
+                for player_id, value in zip(player_ids, raw, strict=True)
+            })
         outcomes = {}
         for player_id, (player, projection) in players.items():
             independent = randomizer.gauss(0, 1)
             game = game_factors[player.game]
             team = team_factors[player.team]
+            script = script_factors[player.team]
             if player.primary_position == Position.QB:
-                components = ((.25, game), (.15, team), (.55, pass_factors[player.team]), (.35, independent))
+                components = ((.25, game), (.15, team), (.50, pass_factors[player.team]), (.20, script), (.35, independent))
             elif player.primary_position in {Position.WR, Position.TE}:
-                components = ((.25, game), (.10, team), (.55, pass_factors[player.team]), (.45, independent))
+                components = ((.25, game), (.10, team), (.45, pass_factors[player.team]), (.15, script), (.30, receiver_share_factors[player_id]), (.40, independent))
             elif player.primary_position == Position.RB:
-                components = ((.25, game), (.20, team), (.55, rush_factors[player.team]), (.45, independent))
+                components = ((.25, game), (.20, team), (.50, rush_factors[player.team]), (-.20, script), (.45, independent))
             elif player.primary_position == Position.K:
                 components = ((.30, game), (.30, team), (.65, independent))
             elif player.primary_position == Position.DST:

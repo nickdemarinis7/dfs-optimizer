@@ -445,6 +445,9 @@ if method == "Salary-file average":
         st.session_state["player_context_attempted"] = True
         try:
             st.session_state["player_context"] = _current_player_context(slate, cache_dir)
+            st.session_state["player_context_source"] = (
+                "Sleeper + nflverse depth and injury data"
+            )
             st.session_state["player_context_error"] = None
             st.session_state["player_context_built_at"] = datetime.now(timezone.utc)
         except (OSError, ValueError) as exc:
@@ -521,6 +524,9 @@ else:
                     st.session_state["player_context_attempted"] = True
                     player_context = _current_player_context(slate, cache_dir)
                     st.session_state["player_context"] = player_context
+                    st.session_state["player_context_source"] = (
+                        "Sleeper + nflverse depth and injury data"
+                    )
                     st.session_state["player_context_error"] = None
                     st.session_state["player_context_built_at"] = datetime.now(timezone.utc)
                 except (OSError, ValueError) as exc:

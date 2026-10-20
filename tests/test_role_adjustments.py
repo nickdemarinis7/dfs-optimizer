@@ -203,7 +203,7 @@ class CurrentRoleAdjustmentTests(unittest.TestCase):
 
         by_id = {item.platform_id: item for item in adjusted}
         self.assertAlmostEqual(by_id["rb1"].projected_points, 10.2)
-        self.assertAlmostEqual(by_id["rb3"].projected_points, 8.8)
+        self.assertAlmostEqual(by_id["rb3"].projected_points, 10.0)
         self.assertEqual(len(audit), 2)
         self.assertTrue(all("pre-lock" in item.reason for item in audit))
 
@@ -323,7 +323,37 @@ class CurrentRoleAdjustmentTests(unittest.TestCase):
         self.assertAlmostEqual(by_id["rb2"].ceiling, 4.2 * (8.3 / 2.16))
         self.assertEqual(by_id["rb3"].projected_points, 3.2)
         self.assertEqual(len(audit), 1)
-        self.assertIn("unavailable back", audit[0].reason)
+        self.assertIn("unavailable player", audit[0].reason)
+
+    def test_promotes_receiver_when_higher_usage_receiver_is_out(self) -> None:
+        players = (
+            Player(
+                "wr1", "Unavailable receiver", Position.WR, (Position.WR,),
+                9000, "SF", "WAS", "WAS@SF", platform_average=15.0,
+                status="OUT",
+            ),
+            Player(
+                "wr2", "Promoted receiver", Position.WR, (Position.WR,),
+                5400, "SF", "WAS", "WAS@SF", platform_average=8.0,
+            ),
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, players, "test"
+        )
+        projection = Projection(
+            "Promoted receiver", "SF", 4.0, platform_id="wr2",
+            floor=1.0, ceiling=9.0,
+        )
+        contexts = (PlayerContext("wr2", 2, None, None, True),)
+
+        adjusted, audit = apply_current_role_adjustments(
+            slate, (projection,), contexts
+        )
+
+        self.assertEqual(adjusted[0].projected_points, 8.0)
+        self.assertEqual(adjusted[0].ceiling, 18.0)
+        self.assertEqual(len(audit), 1)
+        self.assertIn("WR", audit[0].reason)
 
     def test_does_not_guardrail_low_volume_fullback_listed_first(self) -> None:
         player = Player(

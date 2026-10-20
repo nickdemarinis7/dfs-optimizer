@@ -39,7 +39,7 @@ def apply_current_role_adjustments(
 
     A structured pre-lock role report takes precedence over nominal depth
     order. The adjustment remains bounded: expanded workload raises the
-    distribution 10%, committee usage lowers it 15%, and a clearly limited
+    distribution 25%, committee usage lowers it 15%, and a clearly limited
     role lowers it 40%. ``normal`` suppresses a stale chart penalty without
     changing the projection.
 
@@ -49,7 +49,7 @@ def apply_current_role_adjustments(
     is scaled to a conservative 60% floor. Questionable, limited, and
     committee players are deliberately excluded from this safeguard.
 
-    When a higher-usage running back is unavailable, the first healthy reserve
+    When a higher-usage RB, WR, or TE is unavailable, the first healthy reserve
     is instead given a floor equal to his own platform average. A player's old
     per-game history is a poor median after a material promotion; the platform
     average provides a bounded workload signal without assigning all of the
@@ -101,25 +101,32 @@ def apply_current_role_adjustments(
                 key=lambda player: context_by_id[player.platform_id].depth_chart_position or 99,
             ).platform_id)
 
-    # An unavailable lead back can make a previously modest historical sample
+    # An unavailable lead skill player can make a modest historical sample
     # misleading. Depth feeds sometimes omit the unavailable player entirely,
     # so also use the salary file's status and platform average to identify the
-    # higher-usage back. Only the first healthy reserve is raised, and only to
+    # higher-usage player. Only the first healthy reserve is raised, and only to
     # his own platform average. This remains below automatically inheriting all
     # of the unavailable starter's production.
-    replacement_rb_ids: set[str] = set()
-    unavailable_rbs_by_team: dict[str, list[Player]] = {}
+    replacement_skill_ids: set[str] = set()
+    unavailable_skills: dict[tuple[str, Position], list[Player]] = {}
     for player in slate.players:
         context = context_by_id.get(player.platform_id)
         status = (
             context.injury_status if context and context.injury_status else player.status
         )
         if (
-            player.primary_position == Position.RB
+            player.primary_position in {Position.RB, Position.WR, Position.TE}
             and (status or "").strip().upper() in unavailable
         ):
-            unavailable_rbs_by_team.setdefault(player.team, []).append(player)
-    for team, unavailable_backs in unavailable_rbs_by_team.items():
+            unavailable_skills.setdefault(
+                (player.team, player.primary_position), []
+            ).append(player)
+    minimum_platform_average = {
+        Position.RB: 5.0,
+        Position.WR: 4.0,
+        Position.TE: 3.0,
+    }
+    for (team, position), unavailable_players in unavailable_skills.items():
         candidates = []
         for player in slate.players:
             context = context_by_id.get(player.platform_id)
@@ -131,22 +138,24 @@ def apply_current_role_adjustments(
             )
             if (
                 player.team == team
-                and player.primary_position == Position.RB
+                and player.primary_position == position
                 and context is not None
                 and (context.depth_chart_position or 1) > 1
                 and context.active is not False
                 and (status or "").strip().upper() not in unavailable
                 and not expected_role
-                and (player.platform_average or 0) >= 5
+                and (player.platform_average or 0)
+                >= minimum_platform_average[position]
                 and player.platform_id in projection_by_id
                 and any(
-                    (back.platform_average or 0) > (player.platform_average or 0)
-                    for back in unavailable_backs
+                    (unavailable_player.platform_average or 0)
+                    > (player.platform_average or 0)
+                    for unavailable_player in unavailable_players
                 )
             ):
                 candidates.append(player)
         if candidates:
-            replacement_rb_ids.add(min(
+            replacement_skill_ids.add(min(
                 candidates,
                 key=lambda player: context_by_id[player.platform_id].depth_chart_position or 99,
             ).platform_id)
@@ -161,7 +170,7 @@ def apply_current_role_adjustments(
         expected_role = (context.expected_role or "").strip().casefold()
         if expected_role:
             role_factors = {
-                "expanded": 1.10,
+                "expanded": 1.25,
                 "normal": 1.0,
                 "committee": .85,
                 "limited": .60,
@@ -236,7 +245,7 @@ def apply_current_role_adjustments(
                 reason="replacement QB behind an unavailable QB1",
             ))
             continue
-        if projection.platform_id in replacement_rb_ids:
+        if projection.platform_id in replacement_skill_ids:
             player = player_by_id[projection.platform_id]
             target = max(
                 projection.projected_points,
@@ -264,7 +273,10 @@ def apply_current_role_adjustments(
                 factor=factor,
                 original_projection=projection.projected_points,
                 adjusted_projection=updated.projected_points,
-                reason="next healthy RB behind a higher-usage unavailable back",
+                reason=(
+                    f"next healthy {player.primary_position.value} behind a "
+                    "higher-usage unavailable player"
+                ),
             ))
             continue
         detail = factors.get(projection.platform_id or "")
