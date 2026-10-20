@@ -58,6 +58,24 @@ class ProjectionMetricTests(unittest.TestCase):
         self.assertEqual(metrics.zero_point_players, 0)
         self.assertEqual(metrics.zero_point_rate, 0)
 
+    def test_excludes_in_game_injury_from_projection_metrics(self) -> None:
+        projections = (
+            Projection("Healthy", "AAA", 10),
+            Projection("Early Exit", "AAA", 15),
+        )
+        actuals = (
+            PlayerResult("Healthy", "WR", 10, 12),
+            PlayerResult("Early Exit", "WR", 20, 1),
+        )
+
+        metrics = evaluate_projections(
+            projections, actuals,
+            excluded_player_names=frozenset({"Early Exit"}),
+        )
+
+        self.assertEqual(metrics.matched_players, 1)
+        self.assertEqual(metrics.mean_absolute_error, 2)
+
     def test_extracts_unmultiplied_showdown_player_results(self) -> None:
         csv_text = (
             "Rank,EntryId,EntryName,Points,Lineup,,Player,Roster Position,%Drafted,FPTS\n"

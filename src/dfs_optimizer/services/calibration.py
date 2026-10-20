@@ -163,6 +163,7 @@ def calibration_record(
     entry_fee: float | None = None,
     total_winnings: float | None = None,
     winner_strategy_report=None,
+    injury_censored_players: tuple[str, ...] = (),
 ) -> dict:
     evaluation_rows = tuple(evaluation_rows)
     position_metrics = _group_metrics(evaluation_rows, lambda row: row.position or "Unknown")
@@ -221,6 +222,7 @@ def calibration_record(
         "salary_source": slate.source_name,
         "field_size": field_size,
         "winning_score": winning_score,
+        "injury_censored_players": list(injury_censored_players),
         "submitted_entries": len(submitted_entries),
         "best_rank": best.rank if best else None,
         "best_top_percent": 100 * best.rank / field_size if best else None,

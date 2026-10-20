@@ -319,8 +319,8 @@ class CurrentRoleAdjustmentTests(unittest.TestCase):
         )
 
         by_id = {item.platform_id: item for item in adjusted}
-        self.assertAlmostEqual(by_id["rb2"].projected_points, 5.81)
-        self.assertAlmostEqual(by_id["rb2"].ceiling, 4.2 * (5.81 / 2.16))
+        self.assertAlmostEqual(by_id["rb2"].projected_points, 8.3)
+        self.assertAlmostEqual(by_id["rb2"].ceiling, 4.2 * (8.3 / 2.16))
         self.assertEqual(by_id["rb3"].projected_points, 3.2)
         self.assertEqual(len(audit), 1)
         self.assertIn("unavailable back", audit[0].reason)

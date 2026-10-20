@@ -147,9 +147,12 @@ def generate_single_game_3max_portfolio(
     settings: SingleGameOptimizationSettings,
     minimum_unique_players: int = 2,
     candidate_count: int = 24,
-    maximum_median_spread: float = 20.0,
+    maximum_median_spread: float = 30.0,
+    minimum_p90_ratio: float = .80,
 ) -> tuple[OptimizedSingleGameLineup, ...]:
     """Select two balanced builds and one highest-ceiling build jointly."""
+    if not 0 < minimum_p90_ratio <= 1:
+        raise ValueError("minimum_p90_ratio must be greater than 0 and at most 1")
     balanced_settings = replace(settings, ceiling_weight=0.30)
     ceiling_settings = replace(settings, ceiling_weight=0.70)
     candidates_by_key = {}
@@ -218,6 +221,9 @@ def generate_single_game_3max_portfolio(
         raise LineupOptimizationError("not enough Showdown candidates for a 3-max portfolio")
     from dfs_optimizer.services.scenarios import simulate_lineups
     scenario_analysis = simulate_lineups(candidates, simulations=750)
+    minimum_candidate_p90 = (
+        max(item.p90 for item in scenario_analysis) * minimum_p90_ratio
+    )
 
     model = cp_model.CpModel()
     balanced = [model.new_bool_var(f"balanced_{i}") for i in range(len(candidates))]
@@ -234,6 +240,8 @@ def generate_single_game_3max_portfolio(
         player_sets.append({entry.player.platform_id for entry in lineup.entries})
         captain_ids.append(lineup.entries[0].player.platform_id)
         ceilings.append(scenario_analysis[i].p90)
+        if scenario_analysis[i].p90 < minimum_candidate_p90:
+            model.add(chosen == 0)
     model.add(sum(balanced) == 2)
     model.add(sum(ceiling) == 1)
 
@@ -335,9 +343,12 @@ def _optimize_single_game_lineup(slate: Slate, projection_matches: ProjectionMat
         if players[i].platform_id in multiplier_excluded:
             model.add(multiplier[i] == 0)
         projection = projection_matches.by_player_id[players[i].platform_id]
-        multiplier_ceiling = (
-            projection.ceiling if projection.ceiling is not None else projection.projected_points
-        ) * rules.multiplier
+        raw_multiplier_ceiling = (
+            projection.ceiling
+            if projection.ceiling is not None
+            else projection.projected_points
+        )
+        multiplier_ceiling = raw_multiplier_ceiling * rules.multiplier
         if (
             settings.multiplier_positions is not None
             and players[i].primary_position not in settings.multiplier_positions

@@ -16,6 +16,7 @@ from dfs_optimizer.optimization import (
 )
 from dfs_optimizer.projections import build_platform_average_projections
 from dfs_optimizer.services import preflight_lineups
+from dfs_optimizer.services.scenarios import simulate_lineups
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -326,6 +327,21 @@ class SingleGameTests(unittest.TestCase):
         self.assertEqual(ceilings[-1], max(ceilings))
         medians = [lineup.projected_points for lineup in lineups]
         self.assertLessEqual(max(medians) - min(medians), 15)
+        simulated_p90 = [
+            item.p90 for item in simulate_lineups(lineups, simulations=1_000)
+        ]
+        self.assertGreaterEqual(min(simulated_p90), max(simulated_p90) * .80)
+
+    def test_rejects_invalid_portfolio_p90_ratio(self) -> None:
+        projections = build_platform_average_projections(self.dk)
+
+        with self.assertRaises(ValueError):
+            generate_single_game_3max_portfolio(
+                self.dk,
+                match_projections(self.dk, projections),
+                SingleGameOptimizationSettings(),
+                minimum_p90_ratio=0,
+            )
 
 
 if __name__ == "__main__":

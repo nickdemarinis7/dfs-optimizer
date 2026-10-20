@@ -50,9 +50,10 @@ def apply_current_role_adjustments(
     committee players are deliberately excluded from this safeguard.
 
     When a higher-usage running back is unavailable, the first healthy reserve
-    is instead given a conservative floor of 70% of his own platform average.
-    This captures a newly expanded committee role without projecting the
-    reserve as a full replacement for the missing starter.
+    is instead given a floor equal to his own platform average. A player's old
+    per-game history is a poor median after a material promotion; the platform
+    average provides a bounded workload signal without assigning all of the
+    missing starter's production to one replacement.
     """
     if slate.sport != Sport.NFL or not contexts:
         return projections, ()
@@ -104,7 +105,8 @@ def apply_current_role_adjustments(
     # misleading. Depth feeds sometimes omit the unavailable player entirely,
     # so also use the salary file's status and platform average to identify the
     # higher-usage back. Only the first healthy reserve is raised, and only to
-    # 70% of his own platform average to preserve committee uncertainty.
+    # his own platform average. This remains below automatically inheriting all
+    # of the unavailable starter's production.
     replacement_rb_ids: set[str] = set()
     unavailable_rbs_by_team: dict[str, list[Player]] = {}
     for player in slate.players:
@@ -238,7 +240,7 @@ def apply_current_role_adjustments(
             player = player_by_id[projection.platform_id]
             target = max(
                 projection.projected_points,
-                (player.platform_average or 0) * .70,
+                player.platform_average or 0,
             )
             factor = target / projection.projected_points
             scale = lambda value: value * factor if value is not None else None

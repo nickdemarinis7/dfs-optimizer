@@ -44,9 +44,13 @@ class ProjectionEvaluationRow:
 
 
 def evaluate_projections(
-    projections: tuple[Projection, ...], actuals: tuple[PlayerResult, ...]
+    projections: tuple[Projection, ...],
+    actuals: tuple[PlayerResult, ...],
+    excluded_player_names: frozenset[str] = frozenset(),
 ) -> ProjectionMetrics:
-    rows = evaluate_projection_rows(projections, actuals)
+    rows = evaluate_projection_rows(
+        projections, actuals, excluded_player_names=excluded_player_names
+    )
     if not rows:
         raise ValueError("no projections matched contest player results")
     errors = [row.error for row in rows]
@@ -99,13 +103,18 @@ def evaluate_projections(
 
 
 def evaluate_projection_rows(
-    projections: tuple[Projection, ...], actuals: tuple[PlayerResult, ...]
+    projections: tuple[Projection, ...],
+    actuals: tuple[PlayerResult, ...],
+    excluded_player_names: frozenset[str] = frozenset(),
 ) -> tuple[ProjectionEvaluationRow, ...]:
+    excluded = {_normalize(name) for name in excluded_player_names}
     actual_by_name: dict[str, list[PlayerResult]] = {}
     for item in actuals:
         actual_by_name.setdefault(_normalize(item.name), []).append(item)
     rows = []
     for projection in projections:
+        if _normalize(projection.name) in excluded:
+            continue
         candidates = actual_by_name.get(_normalize(projection.name), [])
         if len(candidates) != 1:
             continue

@@ -333,8 +333,40 @@ if results_file is not None:
                 results_file.name,
                 {player.name: player.primary_position.value for player in slate.players},
             )
-            projection_metrics = evaluate_projections(tuple(projections), actuals)
-            evaluation_rows = evaluate_projection_rows(tuple(projections), actuals)
+            projected_names = {
+                item.name.casefold(): item.name for item in projections
+            }
+            injury_options = tuple(sorted(
+                projected_names[item.name.casefold()]
+                for item in actuals
+                if item.name.casefold() in projected_names
+            ))
+            injury_censored_players = tuple(st.multiselect(
+                "Players who exited early with an in-game injury",
+                injury_options,
+                key=f"injury-censored-{hashlib.sha256(results_file.getvalue()).hexdigest()[:12]}",
+                help=(
+                    "Their actual points still grade every lineup, but they are "
+                    "excluded from projection-error calibration so an unforeseeable "
+                    "early exit does not teach the model that the pregame role was wrong."
+                ),
+                placeholder="Select only confirmed early exits",
+            ))
+            if injury_censored_players:
+                st.info(
+                    "Lineup standings are unchanged. Calibration excludes: "
+                    + ", ".join(injury_censored_players),
+                    icon=":material/healing:",
+                )
+            excluded_actual_names = frozenset(injury_censored_players)
+            projection_metrics = evaluate_projections(
+                tuple(projections), actuals,
+                excluded_player_names=excluded_actual_names,
+            )
+            evaluation_rows = evaluate_projection_rows(
+                tuple(projections), actuals,
+                excluded_player_names=excluded_actual_names,
+            )
         except ValueError as exc:
             st.info(f"Player-level evaluation is unavailable: {exc}")
         else:
@@ -483,6 +515,7 @@ if results_file is not None:
                 entry_fee=entry_fee if entry_fee > 0 else None,
                 total_winnings=total_winnings if entry_fee > 0 else None,
                 winner_strategy_report=strategy_report,
+                injury_censored_players=injury_censored_players,
             )
             if record.get("roi") is not None:
                 return_columns = st.columns(3)
@@ -519,7 +552,7 @@ if results_file is not None:
                     )
             record_key = (
                 run_id, result_hash, entry_filter.strip().casefold(),
-                entry_fee, total_winnings,
+                entry_fee, total_winnings, injury_censored_players,
             )
             if st.session_state.get("calibration_record_key") != record_key:
                 saved_calibration_path = None
