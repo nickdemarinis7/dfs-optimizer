@@ -15,7 +15,7 @@ st.set_page_config(
 # new dataclass definitions. Clear that incompatible state whenever the schema
 # changes instead of letting old Projection or PlayerContext instances reach
 # the new page code.
-APP_STATE_SCHEMA_VERSION = 2
+APP_STATE_SCHEMA_VERSION = 3
 if st.session_state.get("_app_state_schema_version") != APP_STATE_SCHEMA_VERSION:
     st.session_state.clear()
     st.session_state["_app_state_schema_version"] = APP_STATE_SCHEMA_VERSION
@@ -45,6 +45,12 @@ for key, default in (
     ("player_context_error", None),
     ("player_context_built_at", None),
     ("player_context_attempted", False),
+    ("final_status_context", ()),
+    ("final_status_content", None),
+    ("final_status_name", None),
+    ("final_status_hash", None),
+    ("final_status_checked_at", None),
+    ("final_status_upload_version", 0),
     ("run_archive", None),
     ("run_archive_name", None),
     ("saved_run_path", None),

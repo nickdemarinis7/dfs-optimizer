@@ -304,6 +304,57 @@ def preflight_lineups(
         entry.player.platform_id for lineup in lineups for entry in lineup.entries
     )
     players_by_id = {player.platform_id: player for player in slate.players}
+    context_by_id = {item.platform_id: item for item in player_context}
+    unavailable_statuses = {"IR", "O", "OUT", "INACTIVE", "INJURED RESERVE"}
+    questionable_statuses = {"Q", "QUESTIONABLE", "D", "DOUBTFUL"}
+    selected_unmatched = []
+    selected_questionable = []
+    selected_unavailable = []
+    for player_id in sorted(selected_ids):
+        player = players_by_id[player_id]
+        if player.primary_position == Position.DST:
+            continue
+        context = context_by_id.get(player_id)
+        if context is None:
+            salary_status = (player.status or "").strip().upper()
+            if salary_status in unavailable_statuses:
+                selected_unavailable.append(player.name)
+            elif salary_status in questionable_statuses:
+                selected_questionable.append(player.name)
+            else:
+                selected_unmatched.append(player.name)
+            continue
+        context_status = (context.injury_status or "").strip().upper()
+        final_status_reported = context_status in {"ACTIVE", "INACTIVE", "OUT"}
+        status = (
+            context_status
+            if context_status
+            else (player.status or "").strip().upper()
+        )
+        if context.active is False or status in unavailable_statuses:
+            selected_unavailable.append(player.name)
+        elif status in questionable_statuses and not final_status_reported:
+            selected_questionable.append(player.name)
+    if selected_unavailable:
+        findings.append(AuditFinding(
+            "ERROR", "selected_player_unavailable",
+            "Selected players are marked unavailable: "
+            + ", ".join(selected_unavailable) + ". Regenerate before submission.",
+        ))
+    if selected_questionable:
+        findings.append(AuditFinding(
+            "WARNING", "selected_player_questionable",
+            "Selected players still need a final availability check: "
+            + ", ".join(selected_questionable) + ".",
+        ))
+    if selected_unmatched:
+        findings.append(AuditFinding(
+            "WARNING", "selected_player_context_unmatched",
+            "No current injury/depth context matched these selected players: "
+            + ", ".join(selected_unmatched) + ". Confirm them manually before submission.",
+        ))
+    if not (selected_unavailable or selected_questionable or selected_unmatched):
+        passed.append("Every selected player has current, non-questionable availability context")
     for player_id in sorted(role_risks & selected_ids):
         player = players_by_id[player_id]
         if (player.status or "").strip().upper() not in {"IR", "O", "OUT"}:
@@ -312,7 +363,6 @@ def preflight_lineups(
                 f"{player.name} appears to be a subordinate same-team quarterback and was manually restored to the player pool.",
             ))
 
-    context_by_id = {item.platform_id: item for item in player_context}
     for player_id, count in sorted(exposure_counts.items()):
         player = players_by_id[player_id]
         context = context_by_id.get(player_id)
@@ -338,7 +388,6 @@ def preflight_lineups(
                 f"{count} lineups. Reduce exposure or update the report before submission.",
             ))
 
-    unavailable_statuses = {"IR", "O", "OUT", "INACTIVE", "INJURED RESERVE"}
     for context in player_context:
         expected_role = (context.expected_role or "").strip().casefold()
         status = (context.injury_status or "").strip().upper()

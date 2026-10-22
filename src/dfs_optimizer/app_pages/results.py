@@ -109,6 +109,20 @@ report = preflight_lineups(
         bool(item.prop_market_count) for item in projections
     ),
 )
+selected_player_ids = {
+    entry.player.platform_id for lineup in lineups for entry in lineup.entries
+    if entry.player.primary_position != Position.DST
+}
+final_status_ids = {
+    item.platform_id
+    for item in st.session_state.get("final_status_context", ())
+}
+if final_status_ids:
+    confirmed_selected = len(selected_player_ids & final_status_ids)
+    st.caption(
+        f"Final-status coverage · {confirmed_selected} of "
+        f"{len(selected_player_ids)} selected players confirmed"
+    )
 audit = report.findings
 stale = (
     st.session_state.get("current_config_key") is not None
@@ -184,19 +198,18 @@ ceiling = sum(
 )
 with st.container(border=True):
     st.subheader(role)
-    st.caption(lineup_scenario.label)
+    st.badge(lineup_scenario.label, color="violet")
     st.markdown(
         f"**Construction** · {_lineup_story(lineup, slate.contest_format)}"
     )
-    top_metrics = st.columns(2)
+    top_metrics = st.columns(3)
     top_metrics[0].metric("Median", f"{lineup.projected_points:.2f}")
-    top_metrics[1].metric("Ceiling", f"{ceiling:.2f}")
-    bottom_metrics = st.columns(2)
+    top_metrics[1].metric("P90", f"{lineup_scenario.p90:.2f}")
+    top_metrics[2].metric("Ceiling", f"{ceiling:.2f}")
+    bottom_metrics = st.columns(3)
     bottom_metrics[0].metric("Salary", f"${lineup.salary:,}")
     bottom_metrics[1].metric("Unused", f"${lineup.salary_cap - lineup.salary:,}")
-    simulation_metrics = st.columns(2)
-    simulation_metrics[0].metric("Simulated P90", f"{lineup_scenario.p90:.2f}")
-    simulation_metrics[1].metric(
+    bottom_metrics[2].metric(
         "Portfolio-best rate", f"{lineup_scenario.top_rate:.1%}",
         help=(
             "How often this lineup scores highest among only the lineups in "
@@ -209,8 +222,13 @@ with st.container(border=True):
         "Team": entry.player.team,
         "Projection": entry.projection.projected_points
         * getattr(entry, "point_multiplier", 1),
-        "Status": entry.player.status or "",
-    } for entry in lineup.entries]), width="stretch", hide_index=True)
+        "Status": entry.player.status or "—",
+    } for entry in lineup.entries]),
+        column_config={
+            "Projection": st.column_config.NumberColumn(format="%.1f"),
+        },
+        width="stretch", hide_index=True,
+    )
 
 with st.container(border=True):
     section_intro(
@@ -219,9 +237,14 @@ with st.container(border=True):
         icon=":material/fact_check:",
     )
     if audit:
-        st.dataframe(pd.DataFrame([{"Severity": x.severity, "Check": x.code, "Details": x.message} for x in audit]), width="stretch", hide_index=True)
+        for finding in audit:
+            message = f"**{finding.code.replace('_', ' ').title()}**  \n{finding.message}"
+            if finding.severity == "ERROR":
+                st.error(message, icon=":material/error:")
+            else:
+                st.warning(message, icon=":material/warning:")
     else:
-        st.success("No pre-submit audit findings.")
+        st.success("No pre-submit audit findings.", icon=":material/verified:")
 
 action_guide(
     2,
@@ -234,7 +257,16 @@ with st.container(border=True):
         "The basic CSV lists your lineups. The official-template option is best when the contest site provides an entry-edit file.",
         icon=":material/download:",
     )
-    st.download_button("Download lineup CSV", lineups_csv_text(lineups, slate.platform).encode(), "lineups.csv", "text/csv", disabled=blocking, icon=":material/download:", width="stretch")
+    st.download_button(
+        "Download lineup CSV",
+        lineups_csv_text(lineups, slate.platform).encode(),
+        "lineups.csv",
+        "text/csv",
+        disabled=blocking,
+        icon=":material/download:",
+        type="primary",
+        width="stretch",
+    )
     template = st.file_uploader("Official contest-entry template (optional)", type="csv")
     if template:
         try:

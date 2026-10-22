@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 import csv
 import io
+import json
 import re
 import unicodedata
 from zoneinfo import ZoneInfo
@@ -141,6 +142,143 @@ def merge_player_context_sources(
             current.injury_reported or item.injury_reported,
         )
     return tuple(merged.values())
+
+
+def apply_final_status_overrides(
+    contexts: tuple[PlayerContext, ...],
+    final_statuses: tuple[PlayerContext, ...],
+) -> tuple[PlayerContext, ...]:
+    """Apply an official active/inactive list as the authoritative status layer.
+
+    Final game status supersedes stale salary-file and practice designations,
+    while depth, projections, and manually recorded workload reports remain
+    intact.
+    """
+    merged = {item.platform_id: item for item in contexts}
+    for final in final_statuses:
+        current = merged.get(final.platform_id)
+        if current is None:
+            merged[final.platform_id] = final
+            continue
+        merged[final.platform_id] = replace_player_context_status(current, final)
+    return tuple(merged.values())
+
+
+def replace_player_context_status(
+    current: PlayerContext, final: PlayerContext
+) -> PlayerContext:
+    return PlayerContext(
+        platform_id=current.platform_id,
+        depth_chart_position=current.depth_chart_position,
+        injury_status=final.injury_status,
+        practice_participation=current.practice_participation,
+        active=final.active,
+        verified_projection=current.verified_projection,
+        expected_role=current.expected_role,
+        role_note=current.role_note,
+        injury_reported=True,
+    )
+
+
+def import_final_status_csv(
+    slate: Slate, content: bytes | str
+) -> tuple[PlayerContext, ...]:
+    """Import an official final active/inactive report for the current slate."""
+    text = content.decode("utf-8-sig") if isinstance(content, bytes) else content
+    reader = csv.DictReader(io.StringIO(text))
+    fields = {field.strip().casefold() for field in (reader.fieldnames or ())}
+    missing = {"name", "team", "final_status"} - fields
+    if missing:
+        raise ValueError(
+            "final-status CSV is missing columns: " + ", ".join(sorted(missing))
+        )
+    players_by_key: dict[tuple[str, str], list] = {}
+    for player in slate.players:
+        players_by_key.setdefault(
+            (_normalize(player.name), player.team.strip().upper()), []
+        ).append(player)
+
+    contexts = []
+    seen_ids: set[str] = set()
+    unmatched: list[str] = []
+    allowed = {"ACTIVE", "INACTIVE", "OUT"}
+    for row_number, raw_row in enumerate(reader, start=2):
+        row = {
+            str(key).strip().casefold(): value
+            for key, value in raw_row.items() if key is not None
+        }
+        name = _text(row.get("name"))
+        team = (_text(row.get("team")) or "").upper()
+        status = (_text(row.get("final_status")) or "").upper()
+        if not status:
+            continue
+        if not name or not team:
+            raise ValueError(f"final-status row {row_number} needs name and team")
+        if status not in allowed:
+            raise ValueError(
+                f"final-status row {row_number} must be ACTIVE, INACTIVE, OUT, or blank"
+            )
+        candidates = players_by_key.get((_normalize(name), team), ())
+        if len(candidates) != 1:
+            unmatched.append(f"{name} ({team})")
+            continue
+        player = candidates[0]
+        if player.platform_id in seen_ids:
+            raise ValueError(f"final-status CSV contains duplicate player {name}")
+        seen_ids.add(player.platform_id)
+        contexts.append(PlayerContext(
+            platform_id=player.platform_id,
+            depth_chart_position=None,
+            injury_status=status,
+            practice_participation=None,
+            active=status == "ACTIVE",
+            injury_reported=True,
+        ))
+    if unmatched:
+        preview = ", ".join(unmatched[:5])
+        remainder = len(unmatched) - 5
+        raise ValueError(
+            "final-status rows did not match the slate: " + preview
+            + (f" and {remainder} more" if remainder > 0 else "")
+        )
+    if not contexts:
+        raise ValueError("final-status CSV did not contain any completed statuses")
+    return tuple(contexts)
+
+
+def final_status_csv_template(slate: Slate) -> bytes:
+    """Return a compact final-status template for every player on the slate."""
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(("name", "team", "final_status"))
+    for player in sorted(slate.players, key=lambda item: (item.team, item.name)):
+        writer.writerow((player.name, player.team, ""))
+    return output.getvalue().encode()
+
+
+def player_context_snapshot(
+    contexts: tuple[PlayerContext, ...], *, source: str | None, checked_at: datetime | None
+) -> bytes:
+    """Serialize the exact context layer used by a run for later replay/audit."""
+    payload = {
+        "source": source,
+        "checked_at": checked_at.isoformat() if checked_at else None,
+        "players": [
+            {
+                "platform_id": item.platform_id,
+                "depth_chart_position": item.depth_chart_position,
+                "injury_status": item.injury_status,
+                "practice_participation": item.practice_participation,
+                "active": item.active,
+                "verified_projection": item.verified_projection,
+                "expected_role": item.expected_role,
+                "role_note": item.role_note,
+                "injury_reported": item.injury_reported,
+            }
+            for item in contexts
+        ],
+    }
+    return json.dumps(payload, indent=2, sort_keys=True).encode()
 
 
 def match_nflverse_player_context(
@@ -375,16 +513,17 @@ def summarize_prelock_context(
             (context.practice_participation or "").strip().upper()
             if context else ""
         )
+        final_status_reported = injury_status in {"ACTIVE", "INACTIVE", "OUT"}
         if (
-            salary_status in unavailable_statuses
+            (not final_status_reported and salary_status in unavailable_statuses)
             or injury_status in unavailable_statuses
             or (context is not None and context.active is False)
         ):
             unavailable.add(player.platform_id)
         elif (
-            salary_status in questionable_statuses
+            (not final_status_reported and salary_status in questionable_statuses)
             or injury_status in questionable_statuses
-            or practice in limited_practice
+            or (not final_status_reported and practice in limited_practice)
         ):
             questionable.add(player.platform_id)
         if context is not None and (

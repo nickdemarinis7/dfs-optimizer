@@ -114,6 +114,60 @@ class HistoricalForecastTests(unittest.TestCase):
         self.assertAlmostEqual(_role_trend_factor(Position.RB, declining), 0.375)
         self.assertEqual(_role_trend_factor(Position.WR, injury_absence), 1.0)
 
+    def test_missed_games_with_no_snaps_do_not_crush_returning_qb_forecast(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            players = root / "players.csv"
+            teams = root / "teams.csv"
+            snaps = root / "snaps.csv"
+            games = root / "games.csv"
+            players.write_text(
+                "season,week,season_type,player_display_name,position,attempts,passing_yards,passing_tds,passing_interceptions\n"
+                "2026,1,REG,Returning Quarterback,QB,30,240,2,0\n"
+                "2026,4,REG,Returning Quarterback,QB,30,240,2,0\n",
+                encoding="utf-8",
+            )
+            teams.write_text(
+                "season,week,season_type,game_id,team\n"
+                "2026,1,REG,g1,AAA\n"
+                "2026,2,REG,g2,AAA\n"
+                "2026,3,REG,g3,AAA\n"
+                "2026,4,REG,g4,AAA\n",
+                encoding="utf-8",
+            )
+            snaps.write_text(
+                "season,week,game_type,player,team,offense_pct\n"
+                "2026,1,REG,Returning Quarterback,AAA,1.0\n"
+                "2026,4,REG,Returning Quarterback,AAA,1.0\n",
+                encoding="utf-8",
+            )
+            games.write_text(
+                "game_id,home_team,away_team,home_score,away_score\n",
+                encoding="utf-8",
+            )
+            slate = Slate(
+                Platform.DRAFTKINGS,
+                ContestFormat.SINGLE_GAME,
+                (Player(
+                    "qb", "Returning Quarterback", Position.QB, (Position.QB,),
+                    10_000, "AAA", "BBB", "AAA@BBB", multiplier_salary=15_000,
+                ),),
+                "test.csv",
+            )
+
+            offense, _ = forecast_from_nflverse(
+                slate,
+                (players,),
+                (teams,),
+                games,
+                2026,
+                5,
+                snap_files=(snaps,),
+            )
+
+            self.assertEqual(len(offense), 1)
+            self.assertGreater(offense[0].stats.passing_yards, 200)
+
     def test_mayer_style_spot_starts_do_not_survive_role_loss(self) -> None:
         current_games = [
             {"targets": "1"},

@@ -50,10 +50,11 @@ def apply_current_role_adjustments(
     committee players are deliberately excluded from this safeguard.
 
     When a higher-usage RB, WR, or TE is unavailable, the first healthy reserve
-    is instead given a floor equal to his own platform average. A player's old
-    per-game history is a poor median after a material promotion; the platform
-    average provides a bounded workload signal without assigning all of the
-    missing starter's production to one replacement.
+    is instead given a modest 10% promotion above the stronger of his current
+    forecast and platform average. A player's old per-game history is a poor
+    median after a material promotion; this bounded uplift recognizes the new
+    opportunity without assigning all of the missing starter's production to
+    one replacement.
     """
     if slate.sport != Sport.NFL or not contexts:
         return projections, ()
@@ -247,10 +248,11 @@ def apply_current_role_adjustments(
             continue
         if projection.platform_id in replacement_skill_ids:
             player = player_by_id[projection.platform_id]
-            target = max(
+            promoted_baseline = max(
                 projection.projected_points,
                 player.platform_average or 0,
             )
+            target = promoted_baseline * 1.10
             factor = target / projection.projected_points
             scale = lambda value: value * factor if value is not None else None
             updated = replace(
@@ -275,7 +277,7 @@ def apply_current_role_adjustments(
                 adjusted_projection=updated.projected_points,
                 reason=(
                     f"next healthy {player.primary_position.value} behind a "
-                    "higher-usage unavailable player"
+                    "higher-usage unavailable player; bounded opportunity uplift"
                 ),
             ))
             continue

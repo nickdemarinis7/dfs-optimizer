@@ -14,6 +14,7 @@ from dfs_optimizer.app_ui import (
     apply_platform_theme,
     feature_strip,
     hero,
+    journey_strip,
     optional_label,
     page_kicker,
     section_intro,
@@ -41,7 +42,10 @@ except ImportError:
     download_historical_data = _projection_services.download_historical_data
     historical_data_coverage = _projection_services.historical_data_coverage
     historical_data_paths = _projection_services.historical_data_paths
-from dfs_optimizer.services.player_context import fetch_player_context
+from dfs_optimizer.services.player_context import (
+    apply_final_status_overrides,
+    fetch_player_context,
+)
 from dfs_optimizer.services.role_adjustments import apply_current_role_adjustments
 from dfs_optimizer.services.cfb_projections import (
     CFB_FORECAST_MODEL_VERSION,
@@ -57,7 +61,7 @@ from dfs_optimizer.services.cfb_projections import (
 from dfs_optimizer.services.slates import infer_slate_period, load_uploaded_salary_file
 
 
-FORECAST_MODEL_VERSION = "returning-starter-v8"
+FORECAST_MODEL_VERSION = "injury-absence-padding-v9"
 
 
 @st.cache_data(max_entries=8, show_spinner=False)
@@ -68,6 +72,19 @@ def _forecast(slate, season: int, week: int, cache_dir: str, model_version: str)
 @st.cache_data(ttl=30 * 60, max_entries=8, show_spinner=False)
 def _current_player_context(slate, cache_dir: str):
     return fetch_player_context(slate, cache_dir, max_age_hours=.5)
+
+
+def _context_with_final_status(items):
+    return apply_final_status_overrides(
+        tuple(items), tuple(st.session_state.get("final_status_context", ()))
+    )
+
+
+def _player_context_source() -> str:
+    source = "Sleeper + nflverse depth and injury data"
+    if st.session_state.get("final_status_context"):
+        source += " + uploaded final active/inactive report"
+    return source
 
 
 @st.cache_data(ttl=6 * 3600, max_entries=8, show_spinner=False)
@@ -99,6 +116,11 @@ salary_content = st.session_state.get("salary_content")
 if slate is None:
     hero("Build lineups with a reason.", "Upload one official salary file. Lineup Studio will identify the slate, build role-aware projections, and guide you to a contest-ready portfolio.")
     feature_strip("NFL + CFB", "DraftKings + FanDuel", "Classic + Showdown")
+    journey_strip(
+        "Upload the official slate",
+        "Review projections and roles",
+        "Generate, verify, and export",
+    )
     action_guide(
         1,
         "Upload a salary CSV",
@@ -152,6 +174,8 @@ if st.button("Change salary file", icon=":material/swap_horiz:"):
         "cfb_lines_content", "projection_input_snapshot",
         "projection_input_snapshot_name", "cfb_player_context_hash",
         "player_context_source",
+        "final_status_context", "final_status_content", "final_status_name",
+        "final_status_hash", "final_status_checked_at", "final_status_upload_version",
         "lineup_config_key", "run_archive", "run_archive_name", "saved_run_path",
         "current_run_id",
         "generation_warning",
@@ -444,10 +468,10 @@ if method == "Salary-file average":
     if not st.session_state.get("player_context_attempted"):
         st.session_state["player_context_attempted"] = True
         try:
-            st.session_state["player_context"] = _current_player_context(slate, cache_dir)
-            st.session_state["player_context_source"] = (
-                "Sleeper + nflverse depth and injury data"
+            st.session_state["player_context"] = _context_with_final_status(
+                _current_player_context(slate, cache_dir)
             )
+            st.session_state["player_context_source"] = _player_context_source()
             st.session_state["player_context_error"] = None
             st.session_state["player_context_built_at"] = datetime.now(timezone.utc)
         except (OSError, ValueError) as exc:
@@ -522,11 +546,11 @@ else:
                 status.write("Checking current injuries and depth charts")
                 try:
                     st.session_state["player_context_attempted"] = True
-                    player_context = _current_player_context(slate, cache_dir)
-                    st.session_state["player_context"] = player_context
-                    st.session_state["player_context_source"] = (
-                        "Sleeper + nflverse depth and injury data"
+                    player_context = _context_with_final_status(
+                        _current_player_context(slate, cache_dir)
                     )
+                    st.session_state["player_context"] = player_context
+                    st.session_state["player_context_source"] = _player_context_source()
                     st.session_state["player_context_error"] = None
                     st.session_state["player_context_built_at"] = datetime.now(timezone.utc)
                 except (OSError, ValueError) as exc:

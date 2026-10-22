@@ -73,14 +73,26 @@ def _forecast_players(
             # usage. It must not manufacture a zero forecast for an unmatched name.
             continue
         by_game = {(int(row["season"]), int(row["week"])): row for row in player_history}
-        # A current-team game with no box-score usage is real evidence of a zero role.
+        player_snap_history = snap_history.get(
+            (_normalize(player.name), player.team), {}
+        )
+        # A current-team game with no box-score usage is evidence of a zero role
+        # only when the player has a snap record in that game. An injury absence
+        # also has no box-score row, but treating it as zero usage can collapse a
+        # returning starter's forecast (especially a QB) by more than half.
+        # Retain the legacy padding behavior when no snap feed was supplied.
         for game_key in current_team_weeks.get(player.team, set()):
-            by_game.setdefault(game_key, {"season": str(game_key[0]), "week": str(game_key[1])})
+            if not snap_rows or game_key in player_snap_history:
+                by_game.setdefault(
+                    game_key,
+                    {"season": str(game_key[0]), "week": str(game_key[1])},
+                )
         current_games = [
             by_game[game_key]
             for game_key in sorted(
                 current_team_weeks.get(player.team, set()), reverse=True
             )[:games_used]
+            if game_key in by_game
         ]
         if (
             len(current_games) >= 2
@@ -114,18 +126,13 @@ def _forecast_players(
         opportunity_trend = _role_trend_factor(
             player.primary_position, current_games
         )
-        player_snap_history = snap_history.get(
-            (_normalize(player.name), player.team), {}
-        )
         current_snaps = [
-            player_snap_history.get(
-                game_key,
-                {"season": str(game_key[0]), "week": str(game_key[1])},
-            )
+            player_snap_history[game_key]
             for game_key in sorted(
                 current_team_weeks.get(player.team, set()), reverse=True
             )[:games_used]
             if game_key[1] <= snap_latest_week
+            and game_key in player_snap_history
         ]
         snap_trend = _snap_role_trend_factor(current_snaps)
         role_trend = min(opportunity_trend, snap_trend)
@@ -283,9 +290,9 @@ def _role_trend_factor(position, current_games):
 def _snap_role_trend_factor(current_games):
     """Detect a sustained decline in offensive participation.
 
-    The nflverse percentage is already normalized for team play volume. Missing
-    rows are padded as zeroes, but two pure zeroes remain ambiguous because an
-    injury absence is not evidence of a smaller healthy role.
+    The nflverse percentage is already normalized for team play volume. Callers
+    omit missing rows because an injury absence is not evidence of a smaller
+    healthy role; an actual low snap-share row still captures a role decline.
     """
     shares = [_float(row, "offense_pct") for row in current_games]
     if len(shares) < 3 or sum(shares[:2]) == 0:

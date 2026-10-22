@@ -185,6 +185,41 @@ class PreflightTests(unittest.TestCase):
             for item in report.findings
         ))
 
+    def test_selected_unavailable_player_blocks_submission(self) -> None:
+        player = self.lineups[0].entries[0].player
+        report = preflight_lineups(
+            self.slate,
+            self.projections,
+            self.lineups,
+            player_context=(PlayerContext(
+                player.platform_id, 1, "INACTIVE", None, False,
+            ),),
+        )
+
+        self.assertTrue(report.blocking)
+        self.assertTrue(any(
+            item.code == "selected_player_unavailable"
+            for item in report.findings
+        ))
+
+    def test_selected_questionable_and_unmatched_players_warn(self) -> None:
+        player = next(
+            entry.player for entry in self.lineups[0].entries
+            if entry.player.primary_position.value != "DST"
+        )
+        report = preflight_lineups(
+            self.slate,
+            self.projections,
+            self.lineups,
+            player_context=(PlayerContext(
+                player.platform_id, 1, "QUESTIONABLE", "LIMITED", True,
+            ),),
+        )
+        codes = {item.code for item in report.findings}
+
+        self.assertIn("selected_player_questionable", codes)
+        self.assertIn("selected_player_context_unmatched", codes)
+
 
 if __name__ == "__main__":
     unittest.main()

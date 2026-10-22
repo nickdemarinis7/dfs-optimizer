@@ -56,6 +56,7 @@ class SingleGameOptimizationSettings:
     bust_probability_penalty: float = 0.0
     excluded_player_ids: frozenset[str] = frozenset()
     limited_player_ids: frozenset[str] = frozenset()
+    player_exposure_limits: tuple[tuple[str, float], ...] = ()
     fragile_player_ids: frozenset[str] = frozenset()
     maximum_fragile_players: int | None = None
 
@@ -78,6 +79,11 @@ class SingleGameOptimizationSettings:
             raise ValueError("ownership_penalty cannot be negative")
         if self.bust_probability_penalty < 0:
             raise ValueError("bust_probability_penalty cannot be negative")
+        exposure_ids = [player_id for player_id, _ in self.player_exposure_limits]
+        if len(exposure_ids) != len(set(exposure_ids)):
+            raise ValueError("player exposure limits cannot contain duplicate player ids")
+        if any(not 0 < limit <= 1 for _, limit in self.player_exposure_limits):
+            raise ValueError("player exposure limits must be greater than 0 and at most 1")
         if self.maximum_fragile_players is not None and self.maximum_fragile_players < 0:
             raise ValueError("maximum_fragile_players cannot be negative")
 
@@ -107,6 +113,7 @@ def generate_single_game_lineups(
     ):
         raise ValueError("lineup_ceiling_weights must contain one value between 0 and 1 per lineup")
     base_settings = settings or SingleGameOptimizationSettings()
+    player_exposure_limits = dict(base_settings.player_exposure_limits)
     max_player = max(1, math.floor(count * maximum_player_exposure))
     max_multiplier = max(1, math.floor(count * maximum_multiplier_exposure))
     player_counts: dict[str, int] = {}
@@ -117,6 +124,12 @@ def generate_single_game_lineups(
             key for key, value in player_counts.items()
             if value >= max_player
             or (key in base_settings.limited_player_ids and value >= 1)
+            or (
+                key in player_exposure_limits
+                and value >= max(
+                    1, math.floor(count * player_exposure_limits[key])
+                )
+            )
         )
         multiplier_excluded = frozenset(key for key, value in multiplier_counts.items() if value >= max_multiplier)
         previous = tuple(frozenset(entry.player.platform_id for entry in lineup.entries) for lineup in lineups)

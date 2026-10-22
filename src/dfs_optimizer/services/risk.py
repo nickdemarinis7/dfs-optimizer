@@ -8,6 +8,53 @@ from .opportunity import apply_opportunity_risk
 UNAVAILABLE_STATUSES = frozenset({"IR", "O", "OUT"})
 
 
+def trusted_showdown_core_ids(
+    slate: Slate,
+    projections: tuple[Projection, ...],
+    contexts: tuple[PlayerContext, ...] = (),
+    opportunity_assessments=(),
+) -> frozenset[str]:
+    """Return players safe to exceed a normal Showdown portfolio cap.
+
+    Quarterbacks need a Strong current-opportunity grade. Skill players also
+    need stable recent usage or an explicit normal/expanded pre-lock report.
+    This prevents an injury returner with an old productive sample—or a
+    volatile promoted reserve—from becoming a universal core merely because a
+    small player pool forced the optimizer to relax its global exposure cap.
+    """
+    if slate.contest_format != ContestFormat.SINGLE_GAME:
+        return frozenset()
+    assessments = {
+        item.platform_id: item for item in opportunity_assessments
+    }
+    context_by_id = {item.platform_id: item for item in contexts}
+    players = {item.platform_id: item for item in slate.players}
+    trusted = set()
+    for projection in projections:
+        player_id = projection.platform_id or ""
+        player = players.get(player_id)
+        assessment = assessments.get(player_id)
+        if (
+            player is None
+            or assessment is None
+            or assessment.tier != "Strong"
+            or (projection.bust_probability or 0) >= .45
+        ):
+            continue
+        context = context_by_id.get(player_id)
+        expected_role = (
+            (context.expected_role or "").strip().casefold()
+            if context else ""
+        )
+        if (
+            player.primary_position == Position.QB
+            or (projection.opportunity_stability or 0) >= .70
+            or expected_role in {"expanded", "normal"}
+        ):
+            trusted.add(player_id)
+    return frozenset(trusted)
+
+
 def suggest_player_exposure_limits(
     slate: Slate,
     projections: tuple[Projection, ...],

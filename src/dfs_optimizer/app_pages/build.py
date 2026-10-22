@@ -50,9 +50,13 @@ from dfs_optimizer.data_sources.nfl_props import (
 from dfs_optimizer.services.role_adjustments import apply_current_role_adjustments
 from dfs_optimizer.services.player_context import (
     PlayerContext,
+    apply_final_status_overrides,
+    final_status_csv_template,
     fetch_player_context,
+    import_final_status_csv,
     import_player_context_csv,
     player_context_csv_template,
+    player_context_snapshot,
     summarize_prelock_context,
     verified_player_context_ids,
     unverified_selected_player_ids,
@@ -61,6 +65,7 @@ from dfs_optimizer.services.risk import (
     suggest_default_excluded_player_ids,
     suggest_max_once_player_ids,
     suggest_player_exposure_limits,
+    trusted_showdown_core_ids,
 )
 from dfs_optimizer.services.cfb_projections import restore_verified_cfb_starters
 from dfs_optimizer.services.confidence import apply_projection_confidence
@@ -178,6 +183,38 @@ def store_role_report(player_id: str, expected_role: str | None, note: str) -> N
     st.session_state["player_context"] = tuple(contexts.values())
     st.session_state["player_context_error"] = None
     st.session_state["player_context_attempted"] = True
+
+
+def merge_refreshed_player_context(items) -> tuple[PlayerContext, ...]:
+    """Keep human-confirmed workload and final-status facts across refreshes."""
+    refreshed = tuple(items)
+    saved_reports = {
+        item.platform_id: item
+        for item in st.session_state.get("player_context", ())
+        if item.expected_role
+    }
+    refreshed = tuple(
+        replace(
+            item,
+            expected_role=saved_reports[item.platform_id].expected_role,
+            role_note=saved_reports[item.platform_id].role_note,
+        )
+        if item.platform_id in saved_reports else item
+        for item in refreshed
+    )
+    refreshed_ids = {item.platform_id for item in refreshed}
+    refreshed += tuple(
+        item for player_id, item in saved_reports.items()
+        if player_id not in refreshed_ids
+    )
+    return apply_final_status_overrides(
+        refreshed, tuple(st.session_state.get("final_status_context", ()))
+    )
+
+
+def add_generation_warning(existing: str | None, message: str) -> str:
+    """Preserve every material fallback instead of hiding an earlier warning."""
+    return f"{existing} {message}" if existing else message
 
 
 prelock = summarize_prelock_context(slate, player_context)
@@ -302,26 +339,11 @@ if slate.sport == Sport.NFL:
         try:
             with st.spinner("Refreshing injuries and depth charts…"):
                 refreshed = fetch_player_context(slate, "data/cache", refresh=True)
-            saved_reports = {
-                item.platform_id: item
-                for item in player_context
-                if item.expected_role
-            }
-            refreshed = tuple(
-                replace(
-                    item,
-                    expected_role=saved_reports[item.platform_id].expected_role,
-                    role_note=saved_reports[item.platform_id].role_note,
-                )
-                if item.platform_id in saved_reports else item
-                for item in refreshed
-            )
-            refreshed_ids = {item.platform_id for item in refreshed}
-            refreshed += tuple(
-                item for player_id, item in saved_reports.items()
-                if player_id not in refreshed_ids
-            )
-            store_player_context(refreshed)
+            refreshed = merge_refreshed_player_context(refreshed)
+            source = "Sleeper + nflverse depth and injury data"
+            if st.session_state.get("final_status_context"):
+                source += " + uploaded final active/inactive report"
+            store_player_context(refreshed, source)
             st.session_state.pop(f"build-exclusions-{hash(slate)}", None)
             st.session_state.pop(f"build-max-once-{hash(slate)}", None)
             st.toast("Injuries and depth chart are current.", icon=":material/check_circle:")
@@ -329,6 +351,89 @@ if slate.sport == Sport.NFL:
         except (OSError, ValueError) as exc:
             st.session_state["player_context_error"] = str(exc)
             st.error("Injuries and depth chart could not be refreshed. Try again before lock.")
+    st.markdown("**Final active/inactive report**")
+    st.caption(
+        "Optional, but strongest before lock. Enter ACTIVE, INACTIVE, or OUT for "
+        "confirmed players. This supersedes stale salary and practice statuses and "
+        "is saved inside the run package."
+    )
+    final_status_actions = st.columns(2)
+    final_status_actions[0].download_button(
+        "Download status template",
+        final_status_csv_template(slate),
+        file_name="nfl-final-status-template.csv",
+        mime="text/csv",
+        icon=":material/download:",
+        width="stretch",
+    )
+    final_status_upload = final_status_actions[1].file_uploader(
+        "Upload completed status file",
+        type=("csv",),
+        key=(
+            f"final-status-upload-{hash(slate)}-"
+            f"{st.session_state.get('final_status_upload_version', 0)}"
+        ),
+        label_visibility="collapsed",
+    )
+    if final_status_upload is not None:
+        final_status_content = final_status_upload.getvalue()
+        final_status_hash = hashlib.sha256(final_status_content).hexdigest()
+        if st.session_state.get("final_status_hash") != final_status_hash:
+            try:
+                final_statuses = import_final_status_csv(slate, final_status_content)
+                combined = apply_final_status_overrides(player_context, final_statuses)
+                st.session_state["final_status_context"] = final_statuses
+                st.session_state["final_status_content"] = final_status_content
+                st.session_state["final_status_name"] = final_status_upload.name
+                st.session_state["final_status_hash"] = final_status_hash
+                st.session_state["final_status_checked_at"] = datetime.now(timezone.utc)
+                store_player_context(
+                    combined,
+                    "Sleeper + nflverse depth and injury data + uploaded final active/inactive report",
+                )
+                st.toast(
+                    f"Applied {len(final_statuses)} final player statuses.",
+                    icon=":material/check_circle:",
+                )
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
+    final_statuses = tuple(st.session_state.get("final_status_context", ()))
+    if final_statuses:
+        active_count = sum(item.active is True for item in final_statuses)
+        coverage = len(final_statuses) / max(1, len(slate.players))
+        st.success(
+            f"Final report applied: {active_count} active · "
+            f"{len(final_statuses) - active_count} inactive/out · "
+            f"{coverage:.0%} of slate confirmed",
+            icon=":material/verified:",
+        )
+        if st.button(
+            "Clear final-status report",
+            icon=":material/delete_sweep:",
+            width="stretch",
+            key=f"clear-final-status-{hash(slate)}",
+        ):
+            for key in (
+                "final_status_context", "final_status_content", "final_status_name",
+                "final_status_hash", "final_status_checked_at",
+            ):
+                st.session_state.pop(key, None)
+            st.session_state["final_status_upload_version"] = (
+                st.session_state.get("final_status_upload_version", 0) + 1
+            )
+            try:
+                refreshed = fetch_player_context(slate, "data/cache", max_age_hours=.5)
+                refreshed = merge_refreshed_player_context(refreshed)
+                store_player_context(refreshed)
+            except (OSError, ValueError) as exc:
+                st.session_state["player_context"] = ()
+                st.session_state["player_context_error"] = str(exc)
+                st.session_state["player_context_built_at"] = None
+            st.session_state.pop(f"build-exclusions-{hash(slate)}", None)
+            st.session_state.pop(f"build-max-once-{hash(slate)}", None)
+            st.toast("Final-status overrides cleared.", icon=":material/check_circle:")
+            st.rerun()
     odds_key = os.environ.get("THE_ODDS_API_KEY", "")
     if not odds_key:
         try:
@@ -893,7 +998,14 @@ for player in players.values():
         })
     pool_rows.append(row)
 
-st.caption(f"{len(pool_rows)} players · switch the status filter to explore the slate")
+with st.container(horizontal=True, vertical_alignment="center"):
+    st.caption(f"{len(pool_rows)} players · switch the status filter to explore the slate")
+    show_advanced_player_metrics = st.toggle(
+        "Advanced metrics",
+        value=False,
+        key=f"advanced-player-metrics-{hash(slate)}",
+        help="Show model confidence, ownership, opportunity, betting, and role diagnostics.",
+    )
 st.dataframe(
     pd.DataFrame(pool_rows),
     column_config={
@@ -953,6 +1065,14 @@ st.dataframe(
             help="The specific current-role reason for any projection reduction."
         ),
     },
+    column_order=(
+        None
+        if show_advanced_player_metrics
+        else (
+            "Player", "Position", "Team", "Salary", "Projection", "P90",
+            "Status", "Opportunity",
+        )
+    ),
     width="stretch",
     hide_index=True,
     height=min(420, 36 + max(1, len(pool_rows)) * 35),
@@ -1084,13 +1204,17 @@ if generate_clicked:
                     live_context = fetch_player_context(
                         slate, "data/cache", max_age_hours=.25
                     )
-                    store_player_context(live_context)
+                    live_context = merge_refreshed_player_context(live_context)
+                    source = "Sleeper + nflverse depth and injury data"
+                    if st.session_state.get("final_status_context"):
+                        source += " + uploaded final active/inactive report"
+                    store_player_context(live_context, source)
                 except (OSError, ValueError) as exc:
                     st.session_state["player_context_error"] = str(exc)
-                    generation_warning = (
+                    generation_warning = add_generation_warning(generation_warning, (
                         "The final live player-news refresh failed, so the most recent "
                         "available snapshot was used. Confirm player availability before lock."
-                    )
+                    ))
         projections, role_adjustments = apply_current_role_adjustments(
             slate, base_projections, tuple(live_context)
         )
@@ -1226,19 +1350,40 @@ if generate_clicked:
                             slate, matches, settings
                         )
                     except LineupOptimizationError:
-                        lineups = generate_single_game_lineups(
-                            slate, matches, lineup_count,
-                            minimum_unique_players=minimum_unique,
-                            maximum_player_exposure=maximum_player_exposure,
-                            maximum_multiplier_exposure=maximum_multiplier_exposure,
-                            settings=settings,
-                            lineup_ceiling_weights=(.3, .3, .7),
-                        )
-                        generation_warning = (
-                            "The extra-strict joint Showdown selector could not form a portfolio. "
-                            "These lineups preserve your exposure, uniqueness, player-pool, and "
-                            "Captain/MVP limits, but were generated sequentially instead."
-                        )
+                        # Two-player uniqueness can conflict with the 3-max
+                        # upside floor on small or top-heavy Showdown slates.
+                        # Retry the joint selector with one-player uniqueness
+                        # before falling back to sequential construction. This
+                        # keeps the upside floor, 2-of-3 player cap, and three
+                        # distinct Captain/MVP choices intact.
+                        try:
+                            lineups = generate_single_game_3max_portfolio(
+                                slate,
+                                matches,
+                                settings,
+                                minimum_unique_players=1,
+                            )
+                            effective_minimum_unique = 1
+                            generation_warning = add_generation_warning(generation_warning, (
+                                "Two-player uniqueness conflicted with the portfolio upside floor, "
+                                "so the joint selector used one-player uniqueness. The player "
+                                "exposure cap, three distinct Captain/MVP choices, and upside floor "
+                                "are still enforced."
+                            ))
+                        except LineupOptimizationError:
+                            lineups = generate_single_game_lineups(
+                                slate, matches, lineup_count,
+                                minimum_unique_players=minimum_unique,
+                                maximum_player_exposure=maximum_player_exposure,
+                                maximum_multiplier_exposure=maximum_multiplier_exposure,
+                                settings=settings,
+                                lineup_ceiling_weights=(.3, .3, .7),
+                            )
+                            generation_warning = add_generation_warning(generation_warning, (
+                                "The joint Showdown selectors could not form a portfolio. These "
+                                "lineups preserve your exposure, uniqueness, player-pool, and "
+                                "Captain/MVP limits, but were generated sequentially instead."
+                            ))
                 else:
                     lineups = generate_single_game_lineups(
                         slate, matches, lineup_count, minimum_unique_players=minimum_unique,
@@ -1266,11 +1411,11 @@ if generate_clicked:
                         ),
                     )
                     if len(lineups) == lineup_count:
-                        generation_warning = (
+                        generation_warning = add_generation_warning(generation_warning, (
                             "The requested Showdown uniqueness was infeasible, so the portfolio "
                             "uses one-player uniqueness. Player exposure, Max once, and distinct "
                             "Captain/MVP limits are still enforced."
-                        )
+                        ))
                 if len(lineups) != lineup_count and effective_limited_ids:
                     effective_limited_ids = frozenset()
                     lineups = generate_single_game_lineups(
@@ -1285,17 +1430,70 @@ if generate_clicked:
                         ),
                     )
                     if len(lineups) == lineup_count:
-                        generation_warning = (
+                        generation_warning = add_generation_warning(generation_warning, (
                             "The requested portfolio remained infeasible after reducing uniqueness, "
                             "so Max once caps were relaxed. Player exposure and distinct "
                             "Captain/MVP limits are still enforced."
-                        )
+                        ))
+                if (
+                    len(lineups) != lineup_count
+                    and effective_player_exposure < 1.0
+                ):
+                    # A six-slot, three-entry FanDuel portfolio needs 18 total
+                    # appearances. On a small verified pool, a universal 2-of-3
+                    # cap can be mathematically impossible even after reducing
+                    # uniqueness and Max-once rules. Exposure is therefore the
+                    # final soft constraint to relax, while Captain/MVP exposure,
+                    # roster construction, exclusions, and role safeguards stay
+                    # intact.
+                    # Relax the global cap without turning a volatile value
+                    # play into a universal core. Only players with a Strong
+                    # current-opportunity grade and a non-extreme bust profile
+                    # may reach all three lineups. Everyone else remains at
+                    # two of three through a player-specific cap.
+                    trusted_core_ids = trusted_showdown_core_ids(
+                        slate,
+                        tuple(projections),
+                        tuple(live_context),
+                        opportunity_assessments,
+                    )
+                    protected_exposure_limits = tuple(sorted(
+                        (player_id, .67)
+                        for player_id in players
+                        if player_id not in trusted_core_ids
+                        and player_id not in effective_limited_ids
+                        and player_id not in effective_excluded_ids
+                    ))
+                    effective_player_exposure = 1.0
+                    lineups = generate_single_game_lineups(
+                        slate, matches, lineup_count,
+                        minimum_unique_players=effective_minimum_unique,
+                        maximum_player_exposure=effective_player_exposure,
+                        maximum_multiplier_exposure=maximum_multiplier_exposure,
+                        settings=replace(
+                            settings,
+                            limited_player_ids=effective_limited_ids,
+                            player_exposure_limits=protected_exposure_limits,
+                        ),
+                        lineup_ceiling_weights=(
+                            (*([.3] * (lineup_count - 1)), .7)
+                            if include_ceiling_lineup else None
+                        ),
+                    )
+                    if len(lineups) == lineup_count:
+                        generation_warning = add_generation_warning(generation_warning, (
+                            "The verified player pool could not support a universal two-of-three "
+                            "exposure cap, so only high-confidence core players were allowed up "
+                            "to 100%. Other players remain capped at two lineups; Captain/MVP "
+                            "exposure, exclusions, role safeguards, and lineup uniqueness are "
+                            "still enforced."
+                        ))
             if len(lineups) != lineup_count:
                 if slate.contest_format == ContestFormat.SINGLE_GAME:
                     raise RuntimeError(
                         f"Only {len(lineups)} of {lineup_count} requested lineups could satisfy "
-                        "these settings. Player exposure was not relaxed automatically; raise it "
-                        "explicitly or review excluded players."
+                        "the verified player pool, roster construction, and Captain/MVP limits. "
+                        "Review excluded players and multiplier eligibility."
                     )
                 raise RuntimeError(
                     f"Only {len(lineups)} of {lineup_count} requested lineups could satisfy these settings. "
@@ -1311,11 +1509,14 @@ if generate_clicked:
                     for item in quality_scenario_analysis
                 )
                 if competitive != lineup_count:
-                    raise RuntimeError(
-                        f"Only {competitive} of {lineup_count} lineups met the "
-                        "portfolio upside floor. Raise maximum player exposure "
-                        "or lower uniqueness so the optimizer can share more of "
-                        "the strongest core across lineups."
+                    quality_warning = (
+                        f"{competitive} of {lineup_count} lineups cleared the post-build "
+                        "upside benchmark. The portfolio is valid, but review the lower-upside "
+                        "lineup before entry; increasing player exposure may strengthen it at "
+                        "the cost of more overlap."
+                    )
+                    generation_warning = add_generation_warning(
+                        generation_warning, quality_warning
                     )
             if slate.sport == Sport.CFB:
                 selected_player_ids = {
@@ -1548,6 +1749,14 @@ if generate_clicked:
                 }
                 for item in prop_snapshot
             ], indent=2).encode()
+        if live_context:
+            input_snapshots["player-context.json"] = player_context_snapshot(
+                tuple(live_context),
+                source=st.session_state.get("player_context_source"),
+                checked_at=st.session_state.get("player_context_built_at"),
+            )
+        if final_status_snapshot := st.session_state.get("final_status_content"):
+            input_snapshots["final-status.csv"] = final_status_snapshot
         run_archive = build_run_archive(
             slate,
             projections,

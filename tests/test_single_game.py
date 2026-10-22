@@ -139,6 +139,31 @@ class SingleGameTests(unittest.TestCase):
         self.assertEqual(len(lineups), 3)
         self.assertLessEqual(appearances, 1)
 
+    def test_honors_player_specific_exposure_limit(self) -> None:
+        projections = build_platform_average_projections(self.dk)
+        matches = match_projections(self.dk, projections)
+        baseline = optimize_single_game_lineup(self.dk, matches)
+        limited_id = baseline.entries[0].player.platform_id
+
+        lineups = generate_single_game_lineups(
+            self.dk,
+            matches,
+            count=3,
+            minimum_unique_players=1,
+            maximum_player_exposure=1,
+            settings=SingleGameOptimizationSettings(
+                player_exposure_limits=((limited_id, .67),)
+            ),
+        )
+        appearances = sum(
+            entry.player.platform_id == limited_id
+            for lineup in lineups
+            for entry in lineup.entries
+        )
+
+        self.assertEqual(len(lineups), 3)
+        self.assertLessEqual(appearances, 2)
+
     def test_limits_showdown_lineup_to_one_fragile_skill_player(self) -> None:
         projections = build_platform_average_projections(self.dk)
         matches = match_projections(self.dk, projections)

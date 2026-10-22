@@ -18,6 +18,7 @@ from dfs_optimizer.optimization import (
 )
 from dfs_optimizer.rules import classic_rules_for, single_game_rules_for
 from dfs_optimizer.services.slates import load_uploaded_salary_file
+from dfs_optimizer.services.player_context import PlayerContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +51,14 @@ class RunComparison:
     material_projection_count: int
     lineup_overlap_percent: float
     shared_lineups: int
+
+
+@dataclass(frozen=True, slots=True)
+class RunContextInputs:
+    player_context: tuple[PlayerContext, ...]
+    source: str | None
+    checked_at: datetime | None
+    final_status_content: bytes | None
 
 
 def list_run_records(directory: str | Path = "data/runs") -> tuple[RunRecord, ...]:
@@ -101,6 +110,38 @@ def load_run_snapshot(record: RunRecord) -> RunSnapshot:
         projections = _read_projections(archive.read("projections.csv"))
         lineup_players = _read_lineup_players(archive.read("lineups.csv"), record.platform)
     return RunSnapshot(record, projections, lineup_players)
+
+
+def load_run_context_inputs(record: RunRecord) -> RunContextInputs:
+    """Restore optional player-context inputs saved by newer run archives."""
+    with zipfile.ZipFile(record.path) as archive:
+        names = set(archive.namelist())
+        if "inputs/player-context.json" not in names:
+            return RunContextInputs((), None, None, None)
+        payload = json.loads(archive.read("inputs/player-context.json"))
+        final_status_content = (
+            archive.read("inputs/final-status.csv")
+            if "inputs/final-status.csv" in names else None
+        )
+    checked_value = payload.get("checked_at")
+    try:
+        checked_at = datetime.fromisoformat(checked_value) if checked_value else None
+    except (TypeError, ValueError):
+        checked_at = None
+    contexts = tuple(PlayerContext(
+        platform_id=item["platform_id"],
+        depth_chart_position=item.get("depth_chart_position"),
+        injury_status=item.get("injury_status"),
+        practice_participation=item.get("practice_participation"),
+        active=item.get("active"),
+        verified_projection=item.get("verified_projection"),
+        expected_role=item.get("expected_role"),
+        role_note=item.get("role_note"),
+        injury_reported=bool(item.get("injury_reported")),
+    ) for item in payload.get("players", ()))
+    return RunContextInputs(
+        contexts, payload.get("source"), checked_at, final_status_content
+    )
 
 
 def compare_runs(older: RunRecord, newer: RunRecord) -> RunComparison:

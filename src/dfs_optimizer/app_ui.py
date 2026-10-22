@@ -19,61 +19,68 @@ def apply_app_style() -> None:
             --ls-soft: rgba(109, 40, 217, .09);
             --ls-mark-start: #111827;
             --ls-mark-end: #6d28d9;
-            --ls-ink: #111827;
-            --ls-muted: #64748b;
-            --ls-line: rgba(148, 163, 184, .22);
-            --ls-surface: rgba(255, 255, 255, .82);
+            --ls-ink: var(--text-color);
+            --ls-muted: color-mix(in srgb, var(--text-color) 62%, transparent);
+            --ls-line: color-mix(in srgb, var(--text-color) 14%, transparent);
+            --ls-surface: color-mix(in srgb, var(--background-color) 94%, transparent);
+            --ls-raised: color-mix(in srgb, var(--secondary-background-color) 76%, var(--background-color));
+            --ls-shadow: 0 10px 30px color-mix(in srgb, #020617 10%, transparent);
         }
         /* A focused workspace that still gives dense lineup tables room. */
         .stMainBlockContainer,
         [data-testid="stMainBlockContainer"] {
-            max-width: 64rem;
+            max-width: 54rem;
             /* Streamlit Cloud's toolbar overlays the document. Reserve its
                height plus the iPhone safe area so navigation is never hidden. */
             padding-top: calc(4.75rem + env(safe-area-inset-top)) !important;
-            padding-bottom: 6rem;
+            padding-bottom: calc(7rem + env(safe-area-inset-bottom));
         }
 
         /* A restrained product canvas and crisp type hierarchy. */
         .stApp {
             background:
-                radial-gradient(circle at 8% 2%, rgba(var(--ls-primary-rgb), .10), transparent 27rem),
-                radial-gradient(circle at 96% 18%, rgba(var(--ls-secondary-rgb), .065), transparent 24rem),
-                linear-gradient(180deg, #fbfbfd 0%, #f7f8fa 44%, #f4f5f7 100%);
+                radial-gradient(circle at 8% 0%, rgba(var(--ls-primary-rgb), .085), transparent 25rem),
+                linear-gradient(
+                    180deg,
+                    var(--background-color) 0%,
+                    color-mix(in srgb, var(--background-color) 88%, var(--secondary-background-color)) 100%
+                );
             background-attachment: fixed;
         }
-        h1, h2, h3, p, label, button, input {
+        h1, h2, h3, p, label, button, input, textarea {
             letter-spacing: -0.012em;
         }
         h1 { letter-spacing: -0.035em; }
         h2, h3 { letter-spacing: -0.025em; }
         [data-testid="stCaptionContainer"] {
-            color: #6b7280;
+            color: var(--ls-muted);
             line-height: 1.45;
         }
 
         .st-key-lineup-studio-topbar {
-            position: relative;
+            position: sticky;
+            top: calc(3.4rem + env(safe-area-inset-top));
+            z-index: 90;
             width: 100%;
             max-width: 100%;
             box-sizing: border-box;
-            padding: .55rem .65rem;
-            margin: 0 0 2.5rem;
-            border: 1px solid rgba(255, 255, 255, .78);
-            border-radius: 20px;
-            background: rgba(255, 255, 255, .76);
+            padding: .42rem .5rem;
+            margin: 0 0 1.85rem;
+            border: 1px solid var(--ls-line);
+            border-radius: 18px;
+            background: color-mix(in srgb, var(--background-color) 88%, transparent);
             box-shadow:
-                0 1px 0 rgba(255, 255, 255, .9) inset,
-                0 14px 40px rgba(15, 23, 42, .08);
+                0 1px 0 color-mix(in srgb, var(--text-color) 7%, transparent) inset,
+                var(--ls-shadow);
             backdrop-filter: blur(22px) saturate(150%);
             -webkit-backdrop-filter: blur(22px) saturate(150%);
         }
         .st-key-lineup-studio-topbar .stButton > button {
-            min-height: 2.25rem;
+            min-height: 2.35rem;
             padding: .35rem .75rem;
-            border: 1px solid #e5e7eb;
-            background: #fff;
-            color: #374151;
+            border: 0;
+            background: var(--ls-raised);
+            color: var(--ls-ink);
             box-shadow: none;
             white-space: nowrap;
         }
@@ -81,7 +88,7 @@ def apply_app_style() -> None:
             display: flex;
             align-items: center;
             gap: .7rem;
-            color: #111827;
+            color: var(--ls-ink);
             font-size: .8rem;
             font-weight: 700;
             letter-spacing: .025em;
@@ -94,7 +101,7 @@ def apply_app_style() -> None:
             padding: .2rem .55rem;
             border: 1px solid rgba(var(--ls-primary-rgb), .16);
             border-radius: 999px;
-            color: var(--ls-primary-dark);
+            color: var(--ls-primary);
             background: var(--ls-soft);
             font-size: .68rem;
             font-weight: 700;
@@ -103,10 +110,10 @@ def apply_app_style() -> None:
         .lineup-studio-mark {
             display: grid;
             place-items: center;
-            width: 2.1rem;
-            height: 2.1rem;
+            width: 2.25rem;
+            height: 2.25rem;
             border: 1px solid rgba(255, 255, 255, .24);
-            border-radius: 11px;
+            border-radius: 12px;
             color: white;
             background: linear-gradient(145deg, var(--ls-mark-start), var(--ls-mark-end));
             box-shadow:
@@ -123,8 +130,8 @@ def apply_app_style() -> None:
         .lineup-studio-utility-label {
             padding: .25rem .65rem;
             border-radius: 999px;
-            color: #6e6e73;
-            background: #f1f1f4;
+            color: var(--ls-muted);
+            background: var(--ls-raised);
             font-size: .74rem;
             font-weight: 600;
         }
@@ -132,7 +139,7 @@ def apply_app_style() -> None:
             width: 1.5rem;
             height: .22rem;
             border-radius: 999px;
-            background: #e4e4e8;
+            background: color-mix(in srgb, var(--text-color) 16%, transparent);
         }
         .lineup-studio-step.complete { background: rgba(var(--ls-primary-rgb), .38); }
         .lineup-studio-step.active {
@@ -141,40 +148,40 @@ def apply_app_style() -> None:
         }
         .lineup-studio-step-label {
             margin-left: .4rem;
-            color: #6e6e73;
+            color: var(--ls-muted);
             font-size: .74rem;
             font-weight: 550;
         }
         .lineup-studio-summary {
-            padding: .95rem 1.1rem;
-            margin: .25rem 0 1.75rem;
+            padding: 1rem 1.05rem;
+            margin: .2rem 0 1.35rem;
             border: 1px solid rgba(var(--ls-primary-rgb), .13);
-            border-radius: 16px;
+            border-radius: 18px;
             background: linear-gradient(
                 115deg,
                 rgba(var(--ls-primary-rgb), .12),
-                rgba(255,255,255,.88) 52%,
+                color-mix(in srgb, var(--background-color) 91%, transparent) 52%,
                 rgba(var(--ls-secondary-rgb), .055)
             );
-            box-shadow: 0 12px 34px rgba(15, 23, 42, .055);
+            box-shadow: var(--ls-shadow);
         }
         .lineup-studio-summary strong {
             display: block;
             margin-bottom: .15rem;
-            color: #1d1d1f;
+            color: var(--ls-ink);
             font-size: .95rem;
             font-weight: 620;
         }
         .lineup-studio-summary span {
-            color: #626267;
+            color: var(--ls-muted);
             font-size: .82rem;
         }
         .lineup-studio-hero {
             position: relative;
             isolation: isolate;
             overflow: hidden;
-            padding: 1.25rem 0 1.4rem;
-            margin: -.25rem 0 1.5rem;
+            padding: 1rem 0 1.1rem;
+            margin: -.2rem 0 1.1rem;
         }
         .lineup-studio-hero::before {
             content: "";
@@ -204,7 +211,7 @@ def apply_app_style() -> None:
             max-width: 18ch;
             margin: 0 0 .55rem;
             color: var(--ls-ink);
-            font-size: clamp(2.25rem, 5vw, 3.45rem);
+            font-size: clamp(2.1rem, 5vw, 3.25rem);
             font-weight: 720;
             line-height: 1.02;
             letter-spacing: -.052em;
@@ -221,17 +228,18 @@ def apply_app_style() -> None:
             display: flex;
             flex-wrap: wrap;
             gap: .5rem;
-            margin: -1rem 0 2rem;
+            margin: -.45rem 0 1.4rem;
         }
         .lineup-studio-guide {
             display: flex;
             align-items: flex-start;
             gap: .75rem;
-            padding: .75rem .15rem;
-            margin: .15rem 0 1rem;
-            border-top: 1px solid #e5e7eb;
-            border-bottom: 1px solid #e5e7eb;
-            background: transparent;
+            padding: .9rem 1rem;
+            margin: .15rem 0 1.05rem;
+            border: 1px solid rgba(var(--ls-primary-rgb), .12);
+            border-radius: 16px;
+            background: color-mix(in srgb, var(--background-color) 78%, transparent);
+            box-shadow: var(--ls-shadow);
         }
         .lineup-studio-guide-number {
             display: grid;
@@ -239,27 +247,27 @@ def apply_app_style() -> None:
             place-items: center;
             width: 1.75rem;
             height: 1.75rem;
-            border-radius: 8px;
-            color: var(--ls-primary-dark);
-            background: var(--ls-soft);
+            border-radius: 999px;
+            color: white;
+            background: var(--ls-primary);
             font-size: .76rem;
             font-weight: 700;
         }
         .lineup-studio-guide strong {
             display: block;
             margin: .05rem 0 .18rem;
-            color: #111827;
+            color: var(--ls-ink);
             font-size: .92rem;
         }
         .lineup-studio-guide p {
             margin: 0;
-            color: #64748b;
+            color: var(--ls-muted);
             font-size: .83rem;
             line-height: 1.45;
         }
         .lineup-studio-section-label {
             margin: 1.5rem 0 .55rem;
-            color: #86868b;
+            color: var(--ls-muted);
             font-size: .72rem;
             font-weight: 700;
             letter-spacing: .08em;
@@ -269,26 +277,57 @@ def apply_app_style() -> None:
             padding: .5rem .75rem;
             border: 1px solid rgba(var(--ls-primary-rgb), .10);
             border-radius: 999px;
-            color: #505055;
-            background: rgba(255,255,255,.68);
+            color: var(--ls-muted);
+            background: color-mix(in srgb, var(--background-color) 72%, transparent);
             font-size: .78rem;
             font-weight: 560;
-            box-shadow: 0 6px 20px rgba(30, 45, 65, .05);
+            box-shadow: var(--ls-shadow);
             backdrop-filter: blur(10px);
+        }
+        .lineup-studio-journey {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: .65rem;
+            margin: .25rem 0 1.5rem;
+        }
+        .lineup-studio-journey-step {
+            padding: .85rem;
+            border: 1px solid var(--ls-line);
+            border-radius: 16px;
+            background: color-mix(in srgb, var(--background-color) 78%, transparent);
+        }
+        .lineup-studio-journey-step span {
+            display: block;
+            margin-bottom: .35rem;
+            color: var(--ls-primary);
+            font-size: .68rem;
+            font-weight: 750;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+        }
+        .lineup-studio-journey-step strong {
+            display: block;
+            color: var(--ls-ink);
+            font-size: .82rem;
+            line-height: 1.25;
         }
 
         /* Quiet, consistent surfaces instead of a stack of decorative boxes. */
         [data-testid="stVerticalBlockBorderWrapper"] {
-            border: 1px solid rgba(255, 255, 255, .9);
+            border: 1px solid var(--ls-line);
             background: var(--ls-surface);
-            box-shadow:
-                0 1px 0 rgba(255, 255, 255, .9) inset,
-                0 14px 38px rgba(15, 23, 42, .065);
-            border-radius: 18px;
+            box-shadow: var(--ls-shadow);
+            border-radius: 20px;
             backdrop-filter: blur(16px);
             -webkit-backdrop-filter: blur(16px);
         }
-        [data-testid="stMetric"] { padding: .15rem 0; }
+        [data-testid="stMetric"] {
+            min-width: 8rem;
+            padding: .75rem .8rem;
+            border: 1px solid var(--ls-line);
+            border-radius: 14px;
+            background: var(--ls-raised);
+        }
         [data-testid="stMetricValue"] {
             font-weight: 620;
             letter-spacing: -0.035em;
@@ -296,7 +335,7 @@ def apply_app_style() -> None:
 
         /* Large, calm touch targets. */
         .stButton > button, .stDownloadButton > button {
-            min-height: 2.75rem;
+            min-height: 3rem;
             font-weight: 620;
             border-width: 0;
             transition: transform 120ms ease, box-shadow 120ms ease;
@@ -306,6 +345,11 @@ def apply_app_style() -> None:
             box-shadow:
                 0 1px 0 rgba(255,255,255,.2) inset,
                 0 8px 20px rgba(var(--ls-primary-rgb), .22);
+        }
+        [data-testid="stTextInput"] input,
+        [data-testid="stNumberInput"] input,
+        [data-baseweb="select"] > div {
+            min-height: 3rem;
         }
         .stButton > button:hover, .stDownloadButton > button:hover {
             transform: translateY(-1px);
@@ -320,28 +364,45 @@ def apply_app_style() -> None:
             border: 0;
             border-radius: 0;
             background: transparent;
-            box-shadow: inset 0 -1px rgba(0, 0, 0, .075);
+            box-shadow: inset 0 -1px var(--ls-line);
         }
         [data-testid="stExpander"] summary { padding-left: .1rem; padding-right: .1rem; }
         [data-testid="stPopover"] > button {
             border: 0;
-            background: color-mix(in srgb, var(--ls-primary) 8%, #f0f0f3);
-            color: #3a3a3c;
+            background: color-mix(in srgb, var(--ls-primary) 8%, var(--secondary-background-color));
+            color: var(--ls-ink);
         }
         [data-testid="stFileUploaderDropzone"] {
-            min-height: 9rem;
+            min-height: 7.5rem;
             background:
                 radial-gradient(circle at 12% 20%, rgba(var(--ls-primary-rgb), .10), transparent 12rem),
-                rgba(255,255,255,.76);
+                color-mix(in srgb, var(--background-color) 82%, transparent);
             border: 1.5px dashed rgba(var(--ls-primary-rgb), .34);
             border-radius: 18px;
             box-shadow: 0 12px 32px rgba(15, 23, 42, .045);
         }
         [data-testid="stDataFrame"] {
-            border: 1px solid rgba(210, 210, 215, .5);
+            border: 1px solid var(--ls-line);
             border-radius: 12px;
             overflow: hidden;
             box-shadow: 0 12px 30px rgba(30, 45, 65, .055);
+        }
+        [data-testid="stTabs"] [data-baseweb="tab-list"] {
+            gap: .25rem;
+            padding: .25rem;
+            border-radius: 14px;
+            background: var(--ls-raised);
+        }
+        [data-testid="stTabs"] [role="tab"] {
+            min-height: 2.65rem;
+            border-radius: 11px;
+        }
+        [data-testid="stBottom"] {
+            padding-bottom: env(safe-area-inset-bottom);
+            border-top: 1px solid var(--ls-line);
+            background: color-mix(in srgb, var(--background-color) 90%, transparent);
+            backdrop-filter: blur(20px) saturate(150%);
+            -webkit-backdrop-filter: blur(20px) saturate(150%);
         }
         [data-testid="stAlert"] {
             border: 0;
@@ -349,9 +410,9 @@ def apply_app_style() -> None:
         }
         [data-testid="stSegmentedControl"] {
             padding: .25rem;
-            border: 1px solid #e5e7eb;
+            border: 1px solid var(--ls-line);
             border-radius: 12px;
-            background: #fff;
+            background: var(--background-color);
         }
         [data-testid="stSegmentedControl"] button[aria-pressed="true"] {
             color: #fff;
@@ -369,12 +430,14 @@ def apply_app_style() -> None:
         @media (max-width: 640px) {
             .stMainBlockContainer,
             [data-testid="stMainBlockContainer"] {
-                padding: calc(4.25rem + env(safe-area-inset-top)) 1rem 5rem !important;
+                padding: calc(4.4rem + env(safe-area-inset-top)) .85rem 6.5rem !important;
             }
             h1 { font-size: 2rem !important; }
             [data-testid="stMetricValue"] { font-size: 1.5rem; }
             .st-key-lineup-studio-topbar {
-                margin-bottom: 1.65rem;
+                top: calc(3.25rem + env(safe-area-inset-top));
+                margin-bottom: 1.15rem;
+                border-radius: 16px;
             }
             .lineup-studio-brand { gap: 0; }
             .lineup-studio-brand-name { display: none; }
@@ -384,8 +447,29 @@ def apply_app_style() -> None:
                 transform: none;
             }
             .lineup-studio-step-label { display: none; }
-            .lineup-studio-hero { margin-bottom: 1.7rem; }
-            .lineup-studio-hero h1 { font-size: 2.35rem; }
+            .lineup-studio-hero { margin-bottom: 1.15rem; }
+            .lineup-studio-hero h1 {
+                max-width: 15ch;
+                font-size: 2.05rem;
+                line-height: 1.04;
+            }
+            .lineup-studio-hero p { font-size: .94rem; }
+            .lineup-studio-summary { margin-bottom: 1rem; }
+            .lineup-studio-guide { padding: .8rem .85rem; }
+            .lineup-studio-journey {
+                grid-template-columns: 1fr;
+                gap: .45rem;
+            }
+            .lineup-studio-journey-step {
+                display: grid;
+                grid-template-columns: 2.2rem 1fr;
+                align-items: center;
+                padding: .65rem .8rem;
+            }
+            .lineup-studio-journey-step span { margin: 0; }
+            [data-testid="stVerticalBlockBorderWrapper"] { border-radius: 17px; }
+            [data-testid="stFileUploaderDropzone"] { min-height: 6.5rem; }
+            [data-testid="stDataFrame"] { font-size: .78rem; }
         }
         </style>
         """
@@ -458,6 +542,16 @@ def feature_strip(*features: str) -> None:
         for feature in features
     )
     st.html(f'<div class="lineup-studio-features">{items}</div>')
+
+
+def journey_strip(*steps: str) -> None:
+    """Preview the short mobile workflow before the first upload."""
+    items = "".join(
+        f'<div class="lineup-studio-journey-step"><span>{number:02d}</span>'
+        f'<strong>{escape(step)}</strong></div>'
+        for number, step in enumerate(steps, 1)
+    )
+    st.html(f'<div class="lineup-studio-journey">{items}</div>')
 
 
 def action_guide(number: int | str, title: str, detail: str) -> None:

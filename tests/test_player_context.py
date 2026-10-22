@@ -8,11 +8,15 @@ from tempfile import TemporaryDirectory
 from dfs_optimizer.models import ContestFormat, Platform, Player, Position, Projection, Slate
 from dfs_optimizer.services.player_context import (
     PlayerContext,
+    apply_final_status_overrides,
+    final_status_csv_template,
+    import_final_status_csv,
     import_player_context_csv,
     match_nflverse_player_context,
     match_player_context,
     merge_player_context_sources,
     player_context_csv_template,
+    player_context_snapshot,
     summarize_prelock_context,
     verified_player_context_ids,
     unverified_selected_player_ids,
@@ -66,6 +70,47 @@ class PlayerContextTests(unittest.TestCase):
         self.assertIn("name,team,status,depth_chart_position,active", text)
         self.assertIn("Dak Prescott,DAL", text)
         self.assertIn("Depth Receiver,DAL", text)
+
+    def test_final_status_overrides_stale_questionable_status(self) -> None:
+        final = import_final_status_csv(
+            self.slate,
+            b"name,team,final_status\nDak Prescott,DAL,ACTIVE\n"
+            b"Depth Receiver,DAL,INACTIVE\n",
+        )
+        existing = (
+            PlayerContext("dak", 1, "QUESTIONABLE", "LIMITED", None),
+            PlayerContext("wr", 3, None, None, True, expected_role="expanded"),
+        )
+
+        merged = {item.platform_id: item for item in apply_final_status_overrides(existing, final)}
+        summary = summarize_prelock_context(self.slate, tuple(merged.values()))
+
+        self.assertEqual(merged["dak"].injury_status, "ACTIVE")
+        self.assertTrue(merged["dak"].active)
+        self.assertNotIn("dak", summary.questionable_player_ids)
+        self.assertFalse(merged["wr"].active)
+        self.assertEqual(merged["wr"].expected_role, "expanded")
+        self.assertIn("wr", summary.unavailable_player_ids)
+
+    def test_final_status_template_and_context_snapshot_are_auditable(self) -> None:
+        template = final_status_csv_template(self.slate).decode()
+        snapshot = player_context_snapshot(
+            (PlayerContext("1", 1, "ACTIVE", None, True),),
+            source="official report",
+            checked_at=datetime(2026, 10, 20, tzinfo=timezone.utc),
+        ).decode()
+
+        self.assertIn("name,team,final_status", template)
+        self.assertIn("Dak Prescott,DAL", template)
+        self.assertIn('"source": "official report"', snapshot)
+        self.assertIn('"platform_id": "1"', snapshot)
+
+    def test_final_status_rejects_unknown_values(self) -> None:
+        with self.assertRaisesRegex(ValueError, "ACTIVE, INACTIVE, OUT"):
+            import_final_status_csv(
+                self.slate,
+                b"name,team,final_status\nDak Prescott,DAL,PROBABLE\n",
+            )
 
     def test_out_qb1_makes_active_qb2_replacement_not_backup(self) -> None:
         players = (

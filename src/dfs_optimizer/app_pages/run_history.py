@@ -7,10 +7,12 @@ from dfs_optimizer.app_ui import action_guide, apply_platform_theme, hero, page_
 from dfs_optimizer.services.run_history import (
     compare_runs,
     list_run_records,
+    load_run_context_inputs,
     mark_run_final,
     restore_run,
     update_run_label,
 )
+from dfs_optimizer.services.player_context import import_final_status_csv
 from dfs_optimizer.services.run_replay import replay_run_archive
 
 
@@ -161,6 +163,13 @@ with st.container(border=True):
     if st.button("Open this run", icon=":material/restore:", width="stretch"):
         try:
             loaded_slate, projections, lineups, salary_content, settings = restore_run(selected)
+            context_inputs = load_run_context_inputs(selected)
+            restored_final_status = (
+                import_final_status_csv(
+                    loaded_slate, context_inputs.final_status_content
+                )
+                if context_inputs.final_status_content else ()
+            )
         except (KeyError, OSError, ValueError) as exc:
             st.error(f"Could not restore this run: {exc}")
         else:
@@ -176,10 +185,26 @@ with st.container(border=True):
             st.session_state["saved_run_path"] = str(selected.path)
             st.session_state["current_run_id"] = selected.run_id
             st.session_state["scenario_analysis"] = ()
-            st.session_state["player_context"] = ()
+            st.session_state["player_context"] = context_inputs.player_context
+            st.session_state["player_context_source"] = context_inputs.source
             st.session_state["player_context_error"] = None
-            st.session_state["player_context_built_at"] = None
-            st.session_state["player_context_attempted"] = False
+            st.session_state["player_context_built_at"] = context_inputs.checked_at
+            st.session_state["player_context_attempted"] = bool(
+                context_inputs.player_context
+            )
+            final_content = context_inputs.final_status_content
+            if final_content:
+                st.session_state["final_status_context"] = restored_final_status
+                st.session_state["final_status_content"] = final_content
+                st.session_state["final_status_name"] = "final-status.csv"
+                st.session_state["final_status_hash"] = None
+                st.session_state["final_status_checked_at"] = context_inputs.checked_at
+            else:
+                for key in (
+                    "final_status_context", "final_status_content", "final_status_name",
+                    "final_status_hash", "final_status_checked_at",
+                ):
+                    st.session_state.pop(key, None)
             st.session_state["submission_snapshot_key"] = None
             st.session_state["submission_snapshot"] = None
             st.session_state["saved_submission_path"] = None

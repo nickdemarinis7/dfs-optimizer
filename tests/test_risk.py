@@ -6,8 +6,10 @@ import unittest
 from dfs_optimizer.importers import import_salary_csv
 from dfs_optimizer.models import ContestFormat, Platform, Player, Position, Projection, Slate, Sport
 from dfs_optimizer.services import (
+    OpportunityAssessment,
     suggest_max_once_player_ids,
     suggest_player_exposure_limits,
+    trusted_showdown_core_ids,
 )
 from dfs_optimizer.services.player_context import PlayerContext
 from dfs_optimizer.services.risk import suggest_default_excluded_player_ids
@@ -17,6 +19,79 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PortfolioRiskTests(unittest.TestCase):
+    def test_showdown_universal_core_requires_stable_skill_role(self) -> None:
+        quarterback = Player(
+            "qb", "Starter QB", Position.QB, (Position.QB,),
+            11000, "NE", "CHI", "NE@CHI",
+        )
+        stable_receiver = Player(
+            "stable", "Stable receiver", Position.WR, (Position.WR,),
+            9000, "NE", "CHI", "NE@CHI",
+        )
+        returning_receiver = Player(
+            "returning", "Returning receiver", Position.WR, (Position.WR,),
+            8600, "NE", "CHI", "NE@CHI",
+        )
+        slate = Slate(
+            Platform.FANDUEL, ContestFormat.SINGLE_GAME,
+            (quarterback, stable_receiver, returning_receiver), "test", Sport.NFL,
+        )
+        projections = (
+            Projection(
+                quarterback.name, quarterback.team, 22,
+                platform_id=quarterback.platform_id, bust_probability=.2,
+            ),
+            Projection(
+                stable_receiver.name, stable_receiver.team, 14,
+                platform_id=stable_receiver.platform_id,
+                bust_probability=.25, opportunity_stability=.85,
+            ),
+            Projection(
+                returning_receiver.name, returning_receiver.team, 13,
+                platform_id=returning_receiver.platform_id,
+                bust_probability=.25, opportunity_stability=None,
+            ),
+        )
+        assessments = tuple(
+            OpportunityAssessment(
+                player.platform_id, player.name, 85, "Strong", (), 1,
+            )
+            for player in slate.players
+        )
+
+        trusted = trusted_showdown_core_ids(
+            slate, projections, (), assessments
+        )
+
+        self.assertEqual(trusted, frozenset({"qb", "stable"}))
+
+    def test_confirmed_normal_returner_can_be_universal_core(self) -> None:
+        player = Player(
+            "returning", "Returning receiver", Position.WR, (Position.WR,),
+            8600, "NE", "CHI", "NE@CHI",
+        )
+        slate = Slate(
+            Platform.FANDUEL, ContestFormat.SINGLE_GAME, (player,), "test",
+            Sport.NFL,
+        )
+        projection = Projection(
+            player.name, player.team, 13, platform_id=player.platform_id,
+            bust_probability=.25,
+        )
+        assessment = OpportunityAssessment(
+            player.platform_id, player.name, 85, "Strong", (), 1,
+        )
+        context = PlayerContext(
+            player.platform_id, 1, None, None, True,
+            expected_role="normal", role_note="full workload expected",
+        )
+
+        trusted = trusted_showdown_core_ids(
+            slate, (projection,), (context,), (assessment,)
+        )
+
+        self.assertEqual(trusted, frozenset({player.platform_id}))
+
     def test_nfl_fragile_opportunity_receives_strict_exposure_cap(self) -> None:
         player = Player(
             "volatile", "Volatile NFL Receiver", Position.WR,
