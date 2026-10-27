@@ -23,6 +23,9 @@ def build_run_archive(
     created_at: datetime | None = None,
     projection_built_at: datetime | None = None,
     input_snapshots: dict[str, bytes] | None = None,
+    shadow_projections=None,
+    shadow_lineups=None,
+    experiment: dict | None = None,
 ) -> bytes:
     created = created_at or datetime.now(timezone.utc)
     slate_id = hashlib.sha256(
@@ -34,30 +37,18 @@ def build_run_archive(
         )).encode()
     ).hexdigest()[:16]
     lineup_content = lineups_csv_text(lineups, slate.platform).encode()
-    projection_output = io.StringIO(newline="")
-    writer = csv.writer(projection_output)
-    writer.writerow((
-        "name", "team", "platform_id", "projected_points", "floor", "ceiling",
-        "projected_ownership", "p10", "p25", "p75", "p90", "bust_probability",
-        "sample_size", "opportunity_stability", "data_age_periods",
-        "confidence_score", "confidence_tier", "confidence_reasons",
-        "prop_market_count", "prop_coverage_checked",
-    ))
-    for item in projections:
-        writer.writerow((
-            item.name, item.team, item.platform_id or "", item.projected_points,
-            item.floor, item.ceiling, item.projected_ownership,
-            item.p10, item.p25, item.p75, item.p90, item.bust_probability,
-            item.sample_size, item.opportunity_stability, item.data_age_periods,
-            item.confidence_score, item.confidence_tier,
-            json.dumps(item.confidence_reasons),
-            item.prop_market_count, item.prop_coverage_checked,
-        ))
-    projection_content = projection_output.getvalue().encode()
+    projection_content = _projection_csv_content(projections)
     artifact_content = {
         "lineups.csv": lineup_content,
         "projections.csv": projection_content,
     }
+    if shadow_projections and shadow_lineups:
+        artifact_content["shadow/lineups.csv"] = lineups_csv_text(
+            shadow_lineups, slate.platform
+        ).encode()
+        artifact_content["shadow/projections.csv"] = _projection_csv_content(
+            shadow_projections
+        )
     if salary_content is not None:
         artifact_content[f"salary/{Path(slate.source_name).name}"] = salary_content
     output = io.BytesIO()
@@ -77,6 +68,7 @@ def build_run_archive(
             "projection_count": len(projections),
             "lineup_count": len(lineups),
             "settings": settings,
+            "experiment": experiment,
             "artifacts": {
                 name: {
                     "bytes": len(content),
@@ -93,16 +85,39 @@ def build_run_archive(
             },
         }
         archive.writestr("manifest.json", json.dumps(manifest, indent=2) + "\n")
-        if salary_content is not None:
-            archive.writestr(f"salary/{Path(slate.source_name).name}", salary_content)
-        archive.writestr("lineups.csv", lineup_content)
-        archive.writestr("projections.csv", projection_content)
+        for name, content in artifact_content.items():
+            archive.writestr(name, content)
         for name, content in (input_snapshots or {}).items():
             safe_name = Path(name).name
             if not safe_name or safe_name != name:
                 raise ValueError("input snapshot names must be plain filenames")
             archive.writestr(f"inputs/{safe_name}", content)
     return output.getvalue()
+
+
+def _projection_csv_content(projections) -> bytes:
+    projection_output = io.StringIO(newline="")
+    writer = csv.writer(projection_output)
+    writer.writerow((
+        "name", "team", "platform_id", "projected_points", "floor", "ceiling",
+        "projected_ownership", "p10", "p25", "p75", "p90", "bust_probability",
+        "sample_size", "opportunity_stability", "data_age_periods",
+        "recent_return_games",
+        "confidence_score", "confidence_tier", "confidence_reasons",
+        "prop_market_count", "prop_coverage_checked",
+    ))
+    for item in projections:
+        writer.writerow((
+            item.name, item.team, item.platform_id or "", item.projected_points,
+            item.floor, item.ceiling, item.projected_ownership,
+            item.p10, item.p25, item.p75, item.p90, item.bust_probability,
+            item.sample_size, item.opportunity_stability, item.data_age_periods,
+            item.recent_return_games,
+            item.confidence_score, item.confidence_tier,
+            json.dumps(item.confidence_reasons),
+            item.prop_market_count, item.prop_coverage_checked,
+        ))
+    return projection_output.getvalue().encode()
 
 
 def save_run_archive(

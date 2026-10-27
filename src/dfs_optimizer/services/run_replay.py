@@ -330,6 +330,10 @@ def _read_projections(content: bytes) -> tuple[Projection, ...]:
             int(row["data_age_periods"])
             if row.get("data_age_periods") not in {None, ""} else None
         ),
+        recent_return_games=(
+            int(row["recent_return_games"])
+            if row.get("recent_return_games") not in {None, ""} else None
+        ),
         confidence_score=optional(row.get("confidence_score")),
         confidence_tier=row.get("confidence_tier") or None,
         confidence_reasons=tuple(json.loads(row.get("confidence_reasons") or "[]")),

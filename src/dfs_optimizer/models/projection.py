@@ -21,6 +21,7 @@ class Projection:
     sample_size: int | None = None
     opportunity_stability: float | None = None
     data_age_periods: int | None = None
+    recent_return_games: int | None = None
     confidence_score: float | None = None
     confidence_tier: str | None = None
     confidence_reasons: tuple[str, ...] = ()
@@ -74,6 +75,10 @@ class Projection:
             raise ValueError(f"sample size cannot be negative for {self.name}")
         if self.data_age_periods is not None and self.data_age_periods < 0:
             raise ValueError(f"data age cannot be negative for {self.name}")
+        if self.recent_return_games is not None and self.recent_return_games < 1:
+            raise ValueError(
+                f"recent return games must be positive for {self.name}"
+            )
         if self.prop_market_count is not None and self.prop_market_count < 0:
             raise ValueError(f"prop market count cannot be negative for {self.name}")
         if self.opportunity_stability is not None and not 0 <= self.opportunity_stability <= 1:

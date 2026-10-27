@@ -9,6 +9,7 @@ from dfs_optimizer.models import ContestFormat, Position, Projection, Slate, Spo
 from dfs_optimizer.rules import classic_rules_for, single_game_rules_for
 from .risk import suggest_default_excluded_player_ids
 from .player_context import PlayerContext
+from .cfb_projections import historically_verified_cfb_player_ids
 
 from .audit import AuditFinding, audit_lineups
 
@@ -305,6 +306,10 @@ def preflight_lineups(
     )
     players_by_id = {player.platform_id: player for player in slate.players}
     context_by_id = {item.platform_id: item for item in player_context}
+    historical_context_ids = (
+        historically_verified_cfb_player_ids(projections)
+        if slate.sport == Sport.CFB else frozenset()
+    )
     unavailable_statuses = {"IR", "O", "OUT", "INACTIVE", "INJURED RESERVE"}
     questionable_statuses = {"Q", "QUESTIONABLE", "D", "DOUBTFUL"}
     selected_unmatched = []
@@ -321,7 +326,7 @@ def preflight_lineups(
                 selected_unavailable.append(player.name)
             elif salary_status in questionable_statuses:
                 selected_questionable.append(player.name)
-            else:
+            elif player_id not in historical_context_ids:
                 selected_unmatched.append(player.name)
             continue
         context_status = (context.injury_status or "").strip().upper()
@@ -354,7 +359,9 @@ def preflight_lineups(
             + ", ".join(selected_unmatched) + ". Confirm them manually before submission.",
         ))
     if not (selected_unavailable or selected_questionable or selected_unmatched):
-        passed.append("Every selected player has current, non-questionable availability context")
+        passed.append(
+            "Every selected player has current context or recent repeated CFB participation"
+        )
     for player_id in sorted(role_risks & selected_ids):
         player = players_by_id[player_id]
         if (player.status or "").strip().upper() not in {"IR", "O", "OUT"}:

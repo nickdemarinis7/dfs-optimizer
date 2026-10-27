@@ -9,6 +9,7 @@ from dfs_optimizer.importers import import_salary_csv, match_projections
 from dfs_optimizer.models import ContestFormat, Platform, Position
 from dfs_optimizer.optimization import (
     DEFAULT_SHOWDOWN_MAX_KICKERS_AND_DEFENSES,
+    DEFAULT_SHOWDOWN_MAX_PLAYERS_PER_TEAM,
     SingleGameOptimizationSettings,
     generate_single_game_3max_portfolio,
     generate_single_game_lineups,
@@ -44,6 +45,9 @@ class SingleGameTests(unittest.TestCase):
 
     def test_tournament_default_allows_two_special_teams_players(self) -> None:
         self.assertEqual(DEFAULT_SHOWDOWN_MAX_KICKERS_AND_DEFENSES, 2)
+
+    def test_tournament_default_allows_five_one_game_scripts(self) -> None:
+        self.assertEqual(DEFAULT_SHOWDOWN_MAX_PLAYERS_PER_TEAM, 5)
 
     def test_optimizes_both_single_game_formats(self) -> None:
         for slate, cap, multiplier_slot in ((self.dk, 50_000, "CPT"), (self.fd, 60_000, "MVP")):
@@ -216,6 +220,80 @@ class SingleGameTests(unittest.TestCase):
             {entry.player.platform_id for entry in lineup.entries},
         )
 
+    def test_high_bust_player_cannot_take_multiplier_slot(self) -> None:
+        projections = build_platform_average_projections(self.dk)
+        matches = match_projections(self.dk, projections)
+        baseline = optimize_single_game_lineup(self.dk, matches)
+        captain_id = baseline.entries[0].player.platform_id
+        risky_matches = replace(
+            matches,
+            by_player_id={
+                player_id: replace(
+                    projection,
+                    bust_probability=.70 if player_id == captain_id else .10,
+                )
+                for player_id, projection in matches.by_player_id.items()
+            },
+        )
+
+        lineup = optimize_single_game_lineup(
+            self.dk,
+            risky_matches,
+            settings=SingleGameOptimizationSettings(
+                maximum_multiplier_bust_probability=.45
+            ),
+        )
+
+        self.assertNotEqual(lineup.entries[0].player.platform_id, captain_id)
+
+    def test_three_max_includes_stable_receiver_ceiling_captain(self) -> None:
+        projections = build_platform_average_projections(self.dk)
+        matches = match_projections(self.dk, projections)
+        receiver = next(
+            player for player in self.dk.players
+            if player.primary_position in {Position.WR, Position.TE}
+        )
+        enhanced = replace(
+            matches,
+            by_player_id={
+                player_id: replace(
+                    projection,
+                    ceiling=(
+                        projection.projected_points * 2
+                        if player_id == receiver.platform_id
+                        else projection.ceiling
+                    ),
+                    p90=(
+                        projection.projected_points * 2
+                        if player_id == receiver.platform_id
+                        else projection.p90
+                    ),
+                    opportunity_stability=(
+                        .9 if player_id == receiver.platform_id else .5
+                    ),
+                    bust_probability=(
+                        .1 if player_id == receiver.platform_id else .3
+                    ),
+                )
+                for player_id, projection in matches.by_player_id.items()
+            },
+        )
+
+        lineups = generate_single_game_3max_portfolio(
+            self.dk,
+            enhanced,
+            SingleGameOptimizationSettings(
+                minimum_quarterbacks=1,
+                maximum_players_per_team=4,
+            ),
+            minimum_p90_ratio=.65,
+        )
+
+        self.assertIn(
+            receiver.platform_id,
+            {lineup.entries[0].player.platform_id for lineup in lineups},
+        )
+
     def test_can_penalize_high_projected_ownership(self) -> None:
         projections = build_platform_average_projections(self.dk)
         matches = match_projections(self.dk, projections)
@@ -367,6 +445,35 @@ class SingleGameTests(unittest.TestCase):
                 SingleGameOptimizationSettings(),
                 minimum_p90_ratio=0,
             )
+
+    def test_joint_portfolio_can_share_only_explicit_universal_cores(self) -> None:
+        projections = build_platform_average_projections(self.dk)
+        matches = match_projections(self.dk, projections)
+        core_id = max(
+            matches.by_player_id,
+            key=lambda player_id: matches.by_player_id[player_id].projected_points,
+        )
+
+        lineups = generate_single_game_3max_portfolio(
+            self.dk,
+            matches,
+            SingleGameOptimizationSettings(
+                minimum_quarterbacks=1,
+                maximum_players_per_team=4,
+            ),
+            universal_core_player_ids=frozenset({core_id}),
+        )
+
+        appearances: dict[str, int] = {}
+        for lineup in lineups:
+            for entry in lineup.entries:
+                player_id = entry.player.platform_id
+                appearances[player_id] = appearances.get(player_id, 0) + 1
+        self.assertLessEqual(appearances.get(core_id, 0), 3)
+        self.assertTrue(all(
+            count <= 2 for player_id, count in appearances.items()
+            if player_id != core_id
+        ))
 
 
 if __name__ == "__main__":

@@ -7,7 +7,14 @@ from collections import defaultdict
 from dataclasses import replace
 from pathlib import Path
 
-from dfs_optimizer.models import DefenseStatLine, OffensiveStatLine, Position, Projection, Slate
+from dfs_optimizer.models import (
+    DefenseStatLine,
+    OffensiveStatLine,
+    Position,
+    ProjectedKickerStats,
+    Projection,
+    Slate,
+)
 from dfs_optimizer.rules import nfl_scoring_for
 
 
@@ -25,6 +32,7 @@ def add_historical_ranges(
     """Add empirical outcome distributions using only games before the target."""
     scoring = nfl_scoring_for(slate.platform)
     offense = defaultdict(list)
+    kickers = defaultdict(list)
     offense_rows = defaultdict(list)
     for row in _rows(player_files):
         if row.get("season_type") != "REG" or not _before(row, target_season, target_week):
@@ -47,6 +55,24 @@ def add_historical_ranges(
         offense[_normalize(row.get("player_display_name", ""))].append(
             ((int(row["season"]), int(row["week"])), scoring.score_offense(stats))
         )
+        kicker_stats = ProjectedKickerStats(
+            field_goals_0_to_39=sum(
+                _number(row, column)
+                for column in ("fg_made_0_19", "fg_made_20_29", "fg_made_30_39")
+            ),
+            field_goals_40_to_49=_number(row, "fg_made_40_49"),
+            field_goals_50_plus=(
+                _number(row, "fg_made_50_59")
+                + _number(row, "fg_made_60_")
+            ),
+            extra_points=_number(row, "pat_made"),
+        )
+        kickers[_normalize(row.get("player_display_name", ""))].append(
+            (
+                (int(row["season"]), int(row["week"])),
+                scoring.project_kicker(kicker_stats),
+            )
+        )
         offense_rows[_normalize(row.get("player_display_name", ""))].append(row)
 
     snap_rows = defaultdict(list)
@@ -57,6 +83,17 @@ def add_historical_ranges(
         ):
             snap_rows[(_normalize(row.get("player", "")), row.get("team", ""))].append(row)
 
+    team_rows = _rows(team_files)
+    current_team_weeks = defaultdict(set)
+    for row in team_rows:
+        if (
+            row.get("season_type") == "REG"
+            and int(row.get("season") or 0) == target_season
+            and _before(row, target_season, target_week)
+        ):
+            current_team_weeks[row.get("team", "")].add(
+                int(row.get("week") or 0)
+            )
     games = _rows((games_file,))
     points_allowed = {}
     for game in games:
@@ -65,7 +102,7 @@ def add_historical_ranges(
         points_allowed[(game.get("game_id"), game.get("home_team"))] = int(float(game["away_score"]))
         points_allowed[(game.get("game_id"), game.get("away_team"))] = int(float(game["home_score"]))
     defenses = defaultdict(list)
-    for row in _rows(team_files):
+    for row in team_rows:
         if row.get("season_type") != "REG" or not _before(row, target_season, target_week):
             continue
         key = (row.get("game_id"), row.get("team"))
@@ -92,7 +129,12 @@ def add_historical_ranges(
     enriched = []
     for projection in projections:
         player = players.get(projection.platform_id or "")
-        history = defenses.get(player.team, []) if player and player.primary_position == Position.DST else offense.get(_normalize(projection.name), [])
+        if player and player.primary_position == Position.DST:
+            history = defenses.get(player.team, [])
+        elif player and player.primary_position == Position.K:
+            history = kickers.get(_normalize(projection.name), [])
+        else:
+            history = offense.get(_normalize(projection.name), [])
         scores = [score for _, score in sorted(history, reverse=True)[:games_used]]
         usage_rows = sorted(
             (
@@ -120,6 +162,14 @@ def add_historical_ranges(
             if value is not None
         ]
         opportunity_stability = min(stability_signals) if stability_signals else None
+        recent_return_games = _recent_return_streak(
+            current_team_weeks.get(player.team, set()) if player else set(),
+            {
+                int(row.get("week") or 0)
+                for row in player_snaps
+                if int(row.get("season") or 0) == target_season
+            },
+        )
         latest_week = max(
             (int(row.get("week") or 0) for row in usage_rows), default=0
         )
@@ -127,6 +177,7 @@ def add_historical_ranges(
             "sample_size": len(scores),
             "opportunity_stability": opportunity_stability,
             "data_age_periods": max(0, target_week - 1 - latest_week) if latest_week else None,
+            "recent_return_games": recent_return_games,
         }
         if not scores:
             point = projection.projected_points
@@ -199,6 +250,34 @@ def _recent_retention(values: list[float]) -> float | None:
         return None
     prior_average = sum(prior) / len(prior)
     return min(1.0, max(0.0, (sum(recent) / len(recent)) / prior_average))
+
+
+def _recent_return_streak(
+    team_weeks: set[int], active_weeks: set[int]
+) -> int | None:
+    """Count games since a player returned from a multi-game absence.
+
+    Team game weeks avoid treating byes as absences. A return requires an
+    older active game, at least two missed team games, and no more than two
+    active games since the gap; otherwise the workload is no longer treated as
+    a fresh return.
+    """
+    ordered = sorted((week for week in team_weeks if week > 0), reverse=True)
+    if not ordered or ordered[0] not in active_weeks:
+        return None
+    streak = 0
+    while streak < len(ordered) and ordered[streak] in active_weeks:
+        streak += 1
+    if streak == 0 or streak > 2:
+        return None
+    missed = 0
+    cursor = streak
+    while cursor < len(ordered) and ordered[cursor] not in active_weeks:
+        missed += 1
+        cursor += 1
+    if missed < 2 or cursor >= len(ordered):
+        return None
+    return streak
 
 
 def _normalize(value):

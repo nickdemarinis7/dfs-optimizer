@@ -3,16 +3,16 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from dfs_optimizer.app_state import restore_run_session
 from dfs_optimizer.app_ui import action_guide, apply_platform_theme, hero, page_kicker
 from dfs_optimizer.services.run_history import (
     compare_runs,
+    import_run_archive,
     list_run_records,
-    load_run_context_inputs,
     mark_run_final,
-    restore_run,
+    run_input_coverage,
     update_run_label,
 )
-from dfs_optimizer.services.player_context import import_final_status_csv
 from dfs_optimizer.services.run_replay import replay_run_archive
 
 
@@ -27,11 +27,48 @@ hero(
 )
 action_guide(
     1,
-    "Choose a saved run",
-    "Open an earlier portfolio, compare two generations, or mark the exact run you submitted as final.",
+    "Choose or import a saved run",
+    "Open an earlier portfolio, import a downloaded run package, or mark the exact run you submitted as final.",
 )
 
 run_directory = st.session_state.get("run_directory", "data/runs")
+with st.container(border=True):
+    st.subheader("Import a run package")
+    st.caption(
+        "Use a complete run-package ZIP downloaded from this app. Its file hashes "
+        "are verified before anything is restored."
+    )
+    with st.form("import-run-package", border=False):
+        uploaded_run = st.file_uploader(
+            "Complete run package",
+            type="zip",
+            key="history-run-upload",
+            help="Upload the dfs-run ZIP—not a contest standings ZIP.",
+        )
+        import_clicked = st.form_submit_button(
+            "Import package",
+            icon=":material/upload_file:",
+            type="primary",
+            width="stretch",
+        )
+    if import_clicked:
+        if uploaded_run is None:
+            st.warning("Choose a complete run-package ZIP first.")
+        else:
+            try:
+                imported = import_run_archive(uploaded_run.getvalue(), run_directory)
+            except (OSError, ValueError) as exc:
+                st.error(f"Could not import this run package: {exc}")
+            else:
+                st.session_state["history-selected-run"] = imported.run_id
+                st.session_state["run-imported-message"] = (
+                    f"Imported {imported.label}. You can open it below."
+                )
+                st.rerun()
+
+if message := st.session_state.pop("run-imported-message", None):
+    st.success(message, icon=":material/verified:")
+
 records = list_run_records(run_directory)
 if not records:
     st.info("No locally saved runs yet. Your next lineup generation will appear here.")
@@ -63,6 +100,13 @@ with st.container(border=True):
     facts[1].metric("Players", selected.projection_count)
     facts[2].metric("Status", "Final" if selected.is_final else "Draft")
     st.caption(f"Salary source: `{selected.source_name}`")
+    coverage = run_input_coverage(selected)
+    st.caption(
+        "Inputs preserved · " + " · ".join(
+            f"{'✓' if available else '—'} {name}"
+            for name, available in coverage.items()
+        )
+    )
 
     new_label = st.text_input(
         "Label",
@@ -162,54 +206,10 @@ with st.container(border=True):
                 )
     if st.button("Open this run", icon=":material/restore:", width="stretch"):
         try:
-            loaded_slate, projections, lineups, salary_content, settings = restore_run(selected)
-            context_inputs = load_run_context_inputs(selected)
-            restored_final_status = (
-                import_final_status_csv(
-                    loaded_slate, context_inputs.final_status_content
-                )
-                if context_inputs.final_status_content else ()
-            )
+            restore_run_session(st.session_state, selected)
         except (KeyError, OSError, ValueError) as exc:
             st.error(f"Could not restore this run: {exc}")
         else:
-            st.session_state["slate"] = loaded_slate
-            st.session_state["source_name"] = loaded_slate.source_name
-            st.session_state["salary_content"] = salary_content
-            st.session_state["salary_loaded_at"] = selected.created_at
-            st.session_state["projections"] = projections
-            st.session_state["lineups"] = lineups
-            st.session_state["lineup_settings"] = settings
-            st.session_state["run_archive"] = selected.path.read_bytes()
-            st.session_state["run_archive_name"] = selected.path.name
-            st.session_state["saved_run_path"] = str(selected.path)
-            st.session_state["current_run_id"] = selected.run_id
-            st.session_state["scenario_analysis"] = ()
-            st.session_state["player_context"] = context_inputs.player_context
-            st.session_state["player_context_source"] = context_inputs.source
-            st.session_state["player_context_error"] = None
-            st.session_state["player_context_built_at"] = context_inputs.checked_at
-            st.session_state["player_context_attempted"] = bool(
-                context_inputs.player_context
-            )
-            final_content = context_inputs.final_status_content
-            if final_content:
-                st.session_state["final_status_context"] = restored_final_status
-                st.session_state["final_status_content"] = final_content
-                st.session_state["final_status_name"] = "final-status.csv"
-                st.session_state["final_status_hash"] = None
-                st.session_state["final_status_checked_at"] = context_inputs.checked_at
-            else:
-                for key in (
-                    "final_status_context", "final_status_content", "final_status_name",
-                    "final_status_hash", "final_status_checked_at",
-                ):
-                    st.session_state.pop(key, None)
-            st.session_state["submission_snapshot_key"] = None
-            st.session_state["submission_snapshot"] = None
-            st.session_state["saved_submission_path"] = None
-            st.session_state["lineup_config_key"] = None
-            st.session_state["current_config_key"] = None
             st.switch_page("app_pages/results.py")
 
 if len(records) > 1:
@@ -243,6 +243,13 @@ if len(records) > 1:
         )
     else:
         st.success("The projection snapshots are identical.")
+    if comparison.context_changes:
+        st.caption("Weekly context changes")
+        st.dataframe(
+            pd.DataFrame(comparison.context_changes),
+            hide_index=True,
+            width="stretch",
+        )
 
 if st.button("Back to results", icon=":material/arrow_back:", width="stretch"):
     st.switch_page("app_pages/results.py")

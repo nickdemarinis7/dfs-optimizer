@@ -19,6 +19,28 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PortfolioRiskTests(unittest.TestCase):
+    def test_excludes_cfb_player_listed_in_ourlads_reserves(self) -> None:
+        player = Player(
+            "reserve", "Reserve receiver", Position.WR,
+            (Position.WR, Position.FLEX), 3700, "WVU", "TCU", "WVU@TCU",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.CLASSIC, (player,), "test", Sport.CFB,
+        )
+        projection = Projection(
+            player.name, player.team, 11.3, platform_id=player.platform_id,
+        )
+        context = PlayerContext(
+            player.platform_id, 99, None, None, None,
+            expected_role="limited", role_note="Listed under Ourlads reserves",
+        )
+
+        excluded = suggest_default_excluded_player_ids(
+            slate, (projection,), (context,)
+        )
+
+        self.assertEqual(excluded, frozenset({player.platform_id}))
+
     def test_showdown_universal_core_requires_stable_skill_role(self) -> None:
         quarterback = Player(
             "qb", "Starter QB", Position.QB, (Position.QB,),
@@ -92,6 +114,38 @@ class PortfolioRiskTests(unittest.TestCase):
 
         self.assertEqual(trusted, frozenset({player.platform_id}))
 
+    def test_trusted_showdown_core_keeps_only_strongest_qb_and_skill_player(self) -> None:
+        players = (
+            Player("qb-a", "Top QB", Position.QB, (Position.QB,), 12000, "A", "B", "A@B"),
+            Player("qb-b", "Other QB", Position.QB, (Position.QB,), 11000, "B", "A", "A@B"),
+            Player("wr-a", "Top WR", Position.WR, (Position.WR,), 10000, "A", "B", "A@B"),
+            Player("wr-b", "Other WR", Position.WR, (Position.WR,), 9000, "B", "A", "A@B"),
+        )
+        slate = Slate(
+            Platform.FANDUEL, ContestFormat.SINGLE_GAME, players, "test",
+            Sport.NFL,
+        )
+        projections = tuple(
+            Projection(
+                player.name, player.team, points,
+                platform_id=player.platform_id,
+                bust_probability=.2, opportunity_stability=.9,
+            )
+            for player, points in zip(players, (22, 18, 16, 14), strict=True)
+        )
+        assessments = tuple(
+            OpportunityAssessment(
+                player.platform_id, player.name, 90, "Strong", (), 1,
+            )
+            for player in players
+        )
+
+        trusted = trusted_showdown_core_ids(
+            slate, projections, (), assessments
+        )
+
+        self.assertEqual(trusted, frozenset({"qb-a", "wr-a"}))
+
     def test_nfl_fragile_opportunity_receives_strict_exposure_cap(self) -> None:
         player = Player(
             "volatile", "Volatile NFL Receiver", Position.WR,
@@ -133,6 +187,29 @@ class PortfolioRiskTests(unittest.TestCase):
 
         self.assertEqual(limits[player.platform_id], .50)
 
+    def test_nfl_elevated_bust_risk_is_capped_even_with_strong_role_grade(self) -> None:
+        player = Player(
+            "risky", "Risky starter", Position.TE,
+            (Position.TE, Position.FLEX), 5000, "BAL", "PIT", "BAL@PIT",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.CLASSIC, (player,), "test",
+            Sport.NFL,
+        )
+        projection = Projection(
+            player.name, player.team, 15, platform_id=player.platform_id,
+            floor=4, ceiling=30, bust_probability=.50,
+        )
+        assessment = OpportunityAssessment(
+            player.platform_id, player.name, 78, "Strong", (), 1,
+        )
+
+        limits = suggest_player_exposure_limits(
+            slate, (projection,), (), (assessment,)
+        )
+
+        self.assertEqual(limits[player.platform_id], .34)
+
     def test_cfb_risk_caps_distinguish_moderate_and_severe_volatility(self) -> None:
         players = (
             Player("moderate", "Moderate", Position.WR, (Position.WR, Position.FLEX), 7000, "AAA", "BBB", "AAA@BBB"),
@@ -153,6 +230,31 @@ class PortfolioRiskTests(unittest.TestCase):
         self.assertEqual(limits["moderate"], .50)
         self.assertEqual(limits["severe"], .34)
         self.assertNotIn("stable", limits)
+
+    def test_cfb_uneven_opportunity_is_capped_to_one_of_three(self) -> None:
+        player = Player(
+            "uneven", "Uneven Starter", Position.WR,
+            (Position.WR, Position.FLEX), 6500, "AAA", "BBB", "AAA@BBB",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.CLASSIC, (player,), "test",
+            Sport.CFB,
+        )
+        projection = Projection(
+            player.name, player.team, 15, platform_id=player.platform_id,
+            floor=8, bust_probability=.30,
+        )
+        assessment = OpportunityAssessment(
+            player.platform_id, player.name, 68, "Usable",
+            ("uneven recent opportunity", "listed first on current depth chart"),
+            1.0,
+        )
+
+        limits = suggest_player_exposure_limits(
+            slate, (projection,), (), (assessment,)
+        )
+
+        self.assertEqual(limits[player.platform_id], .50)
 
     def test_verified_new_cfb_starter_receives_conservative_cap(self) -> None:
         player = Player(
@@ -432,6 +534,52 @@ class PortfolioRiskTests(unittest.TestCase):
         self.assertIn("out", suggestions)
         self.assertNotIn("starter", suggestions)
         self.assertNotIn("other", suggestions)
+
+    def test_excludes_unverified_showdown_reserve_with_no_current_role(self) -> None:
+        player = Player(
+            "reserve", "Practice Squad Receiver", Position.WR,
+            (Position.WR, Position.FLEX), 200, "PIT", "NO", "PIT@NO",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, (player,), "test"
+        )
+        projection = Projection(
+            player.name, player.team, 4.3, platform_id=player.platform_id,
+            p25=1.0, bust_probability=.67,
+        )
+        context = PlayerContext("reserve", None, None, None, True)
+
+        suggestions = suggest_default_excluded_player_ids(
+            slate, (projection,), (context,)
+        )
+
+        self.assertEqual(suggestions, frozenset({"reserve"}))
+
+    def test_excludes_unconfirmed_second_kicker(self) -> None:
+        players = (
+            Player("starter-k", "Current Kicker", Position.K, (Position.K,), 4600, "NO", "PIT", "PIT@NO"),
+            Player("dev-k", "Development Kicker", Position.K, (Position.K,), 4600, "NO", "PIT", "PIT@NO"),
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, players, "test"
+        )
+        projections = (
+            Projection("Current Kicker", "NO", 8, platform_id="starter-k"),
+            Projection("Development Kicker", "NO", 10, platform_id="dev-k"),
+        )
+        contexts = (
+            PlayerContext(
+                "starter-k", 1, None, "Full Participation", True,
+                injury_reported=True,
+            ),
+            PlayerContext("dev-k", 1, None, None, True),
+        )
+
+        suggestions = suggest_default_excluded_player_ids(
+            slate, projections, contexts
+        )
+
+        self.assertEqual(suggestions, frozenset({"dev-k"}))
 
     def test_keeps_viable_second_quarterback_and_replacement_for_out_starter(self) -> None:
         players = (

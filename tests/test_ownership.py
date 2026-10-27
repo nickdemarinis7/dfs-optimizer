@@ -75,6 +75,37 @@ class NFLOwnershipEstimateTests(unittest.TestCase):
             uploaded,
         )
 
+    def test_fills_missing_showdown_ownership_without_overwriting_upload(self) -> None:
+        slate, projections = make_single_game_slate(Platform.FANDUEL)
+        partially_uploaded = tuple(
+            replace(item, projected_ownership=25.0 if index == 0 else None)
+            for index, item in enumerate(projections)
+        )
+
+        estimated = estimate_nfl_showdown_ownership(slate, partially_uploaded)
+
+        self.assertEqual(estimated[0].projected_ownership, 25.0)
+        self.assertTrue(all(item.projected_ownership is not None for item in estimated))
+        self.assertAlmostEqual(
+            sum(item.projected_ownership or 0 for item in estimated), 600, places=1
+        )
+
+    def test_fills_missing_classic_ownership_without_overwriting_upload(self) -> None:
+        slate = import_salary_csv(next((ROOT / "samples").glob("*134747-players-list.csv")))
+        projections = build_platform_average_projections(slate)
+        partially_uploaded = tuple(
+            replace(item, projected_ownership=30.0 if index == 0 else None)
+            for index, item in enumerate(projections)
+        )
+
+        estimated = estimate_nfl_classic_ownership(slate, partially_uploaded)
+
+        self.assertEqual(estimated[0].projected_ownership, 30.0)
+        self.assertTrue(all(item.projected_ownership is not None for item in estimated))
+        self.assertAlmostEqual(
+            sum(item.projected_ownership or 0 for item in estimated), 900, places=1
+        )
+
     def test_does_not_estimate_non_nfl_or_classic_slates(self) -> None:
         slate, projections = make_single_game_slate(Platform.DRAFTKINGS)
         classic = replace(slate, contest_format=ContestFormat.CLASSIC)

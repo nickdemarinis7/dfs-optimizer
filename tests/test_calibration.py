@@ -9,8 +9,12 @@ from dfs_optimizer.backtesting import PlayerResult, evaluate_projection_rows, ev
 from dfs_optimizer.models import Platform
 from dfs_optimizer.services.calibration import (
     aggregate_calibration_segments,
+    aggregate_weekly_adjustment_performance,
     aggregate_winner_strategy_bands,
+    calibration_excluded_player_names,
+    calibration_history_bytes,
     calibration_record,
+    import_calibration_records,
     list_calibration_records,
     save_calibration_record,
 )
@@ -18,6 +22,30 @@ from test_classic_optimizer import make_slate
 
 
 class CalibrationLedgerTests(unittest.TestCase):
+    def test_combines_injury_and_automatic_prelock_calibration_exclusions(self) -> None:
+        excluded = calibration_excluded_player_names(
+            {"automatic_exclusion_suggestions": ("Backup QB", "Reserve TE")},
+            ("Early Exit",),
+        )
+
+        self.assertEqual(
+            excluded, frozenset({"Backup QB", "Reserve TE", "Early Exit"})
+        )
+
+    def test_round_trips_portable_calibration_history(self) -> None:
+        records = ({
+            "run_id": "run-1", "contest_format": "classic",
+            "platform": "draftkings", "projection_metrics": {},
+        },)
+
+        imported = import_calibration_records(calibration_history_bytes(records))
+
+        self.assertEqual(imported, records)
+
+    def test_rejects_incomplete_calibration_history(self) -> None:
+        with self.assertRaisesRegex(ValueError, "missing fields"):
+            import_calibration_records(b'{"run_id": "run-1"}')
+
     def test_aggregates_winner_strategy_bands_by_unique_lineup_count(self) -> None:
         combined = aggregate_winner_strategy_bands((
             {"winner_strategy_bands": {"Top 1%": {
@@ -58,6 +86,11 @@ class CalibrationLedgerTests(unittest.TestCase):
         self.assertEqual(saved[0]["projection_metrics"]["mae"], 2)
         self.assertEqual(saved[0]["projection_metrics"]["ownership_samples"], 0)
         self.assertEqual(saved[0]["position_metrics"]["WR"]["players"], 2)
+        self.assertEqual(len(saved[0]["player_calibration"]), 2)
+        self.assertEqual(
+            saved[0]["player_calibration"][0]["projected_points"],
+            projections[0].projected_points,
+        )
 
     def test_records_salary_confidence_ownership_and_roi_segments(self) -> None:
         slate, matches = make_slate(Platform.DRAFTKINGS)
@@ -100,6 +133,11 @@ class CalibrationLedgerTests(unittest.TestCase):
         self.assertEqual(record["confidence_metrics"]["Low"]["players"], 2)
         self.assertEqual(record["entry_cost"], 5)
         self.assertEqual(record["roi"], 1.4)
+        self.assertEqual(record["player_calibration"][0]["salary"], 3000)
+        self.assertAlmostEqual(
+            record["player_calibration"][0]["value_per_thousand"],
+            projections[0].projected_points / 3,
+        )
 
     def test_aggregates_segment_totals_across_slates(self) -> None:
         records = (
@@ -133,6 +171,25 @@ class CalibrationLedgerTests(unittest.TestCase):
 
         self.assertEqual(combined["WR"]["mae"], 3)
         self.assertEqual(combined["WR"]["bias"], -1)
+
+    def test_grades_weekly_adjustment_against_reconstructed_baseline(self) -> None:
+        performance = aggregate_weekly_adjustment_performance(({
+            "player_calibration": [{
+                "player": "Windy QB", "projected_points": 18,
+                "actual_points": 17,  # unadjusted baseline was 20
+            }],
+            "weekly_projection_adjustments": [{
+                "player": "Windy QB", "factor": .9,
+                "reasons": ["live kickoff wind 25 mph"],
+            }],
+        },))
+
+        result = performance["live kickoff wind 25 mph"]
+        self.assertEqual(result["samples"], 1)
+        self.assertEqual(result["before_mae"], 3)
+        self.assertEqual(result["after_mae"], 1)
+        self.assertEqual(result["average_error_improvement"], 2)
+        self.assertEqual(result["helpful_rate"], 1)
 
 
 if __name__ == "__main__":

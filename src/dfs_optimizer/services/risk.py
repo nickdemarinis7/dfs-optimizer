@@ -30,6 +30,9 @@ def trusted_showdown_core_ids(
     context_by_id = {item.platform_id: item for item in contexts}
     players = {item.platform_id: item for item in slate.players}
     trusted = set()
+    projection_by_id = {
+        item.platform_id: item for item in projections if item.platform_id
+    }
     for projection in projections:
         player_id = projection.platform_id or ""
         player = players.get(player_id)
@@ -52,7 +55,33 @@ def trusted_showdown_core_ids(
             or expected_role in {"expanded", "normal"}
         ):
             trusted.add(player_id)
-    return frozenset(trusted)
+
+    # A small Showdown portfolio should be allowed to retain its very best
+    # verified core without turning every stable starter into a universal
+    # play. Keep at most the highest-projected trusted quarterback and the
+    # highest-projected trusted non-quarterback.
+    trusted_qbs = [
+        player_id for player_id in trusted
+        if players[player_id].primary_position == Position.QB
+    ]
+    trusted_skill = [
+        player_id for player_id in trusted
+        if players[player_id].primary_position != Position.QB
+    ]
+
+    def strongest(player_ids):
+        return max(
+            player_ids,
+            key=lambda player_id: projection_by_id[player_id].projected_points,
+            default=None,
+        )
+
+    selected = {
+        player_id
+        for player_id in (strongest(trusted_qbs), strongest(trusted_skill))
+        if player_id is not None
+    }
+    return frozenset(selected)
 
 
 def suggest_player_exposure_limits(
@@ -74,13 +103,27 @@ def suggest_player_exposure_limits(
         assessments = tuple(opportunity_assessments)
         if not assessments:
             _, assessments = apply_opportunity_risk(slate, projections, contexts)
-        return {
-            item.platform_id: .34 if item.tier == "Fragile" else .50
-            for item in assessments
-            if item.tier in {"Fragile", "Watch"}
+        projection_by_id = {
+            item.platform_id: item for item in projections if item.platform_id
         }
+        limits = {}
+        for item in assessments:
+            projection = projection_by_id.get(item.platform_id)
+            limit = (
+                .34 if item.tier == "Fragile"
+                else .50 if item.tier == "Watch"
+                else None
+            )
+            if projection is not None and (projection.bust_probability or 0) >= .45:
+                limit = min(limit or 1.0, .34)
+            if limit is not None:
+                limits[item.platform_id] = limit
+        return limits
     if slate.sport != Sport.CFB:
         return {}
+    assessment_by_id = {
+        item.platform_id: item for item in opportunity_assessments
+    }
     projection_by_id = {
         item.platform_id: item for item in projections if item.platform_id
     }
@@ -123,6 +166,17 @@ def suggest_player_exposure_limits(
                 limit = min(limit or 1, .25)
             elif projection.confidence_score < 55:
                 limit = min(limit or 1, .34)
+        assessment = assessment_by_id.get(player.platform_id)
+        assessment_reasons = set(assessment.reasons) if assessment else set()
+        if "sharp recent usage or snap-share decline" in assessment_reasons:
+            limit = min(limit or 1, .25)
+        elif "meaningful recent opportunity decline" in assessment_reasons:
+            limit = min(limit or 1, .34)
+        elif "uneven recent opportunity" in assessment_reasons:
+            # A nominal starter with an unstable weekly workload should not
+            # occupy two entries in a three-lineup CFB portfolio solely on the
+            # strength of a season average.
+            limit = min(limit or 1, .50)
         if limit is not None:
             limits[player.platform_id] = limit
     return limits
@@ -241,7 +295,79 @@ def suggest_default_excluded_player_ids(
             )
         )
 
-    return frozenset(unavailable | backups | extreme_showdown_punts)
+    # Sleeper's ``active`` field means that a player is associated with a
+    # team; it is not proof of a 53-man or game-day roster spot.  A cheap,
+    # low-floor Showdown skill player who is absent from both depth and injury
+    # feeds is treated as a reserve until a current role is explicitly
+    # confirmed.  This catches practice-squad darts without blocking a
+    # promoted player whose role was supplied through the pre-lock report.
+    unverified_showdown_reserves: set[str] = set()
+    if slate.contest_format == ContestFormat.SINGLE_GAME:
+        unverified_showdown_reserves.update(
+            player.platform_id
+            for player in slate.players
+            if player.primary_position in {Position.RB, Position.WR, Position.TE}
+            and (projection := by_id.get(player.platform_id)) is not None
+            and projection.projected_points < 6
+            and (projection.p25 is None or projection.p25 <= 1.5)
+            and (projection.bust_probability or 0) >= .60
+            and (context := context_by_id.get(player.platform_id)) is not None
+            and context.depth_chart_position is None
+            and not context.injury_reported
+            and (context.expected_role or "").strip().casefold()
+            not in {"expanded", "normal"}
+        )
+
+    # When two kickers from the same team appear in a salary file, current
+    # injury/practice reporting is a useful game-week roster confirmation.
+    # Exclude the unconfirmed alternative rather than allowing old kicking
+    # stats to make a development/practice-squad kicker look like value.
+    unconfirmed_kickers: set[str] = set()
+    if slate.contest_format == ContestFormat.SINGLE_GAME:
+        kickers_by_team: dict[str, list] = {}
+        for player in slate.players:
+            if player.primary_position == Position.K:
+                kickers_by_team.setdefault(player.team, []).append(player)
+        for kickers in kickers_by_team.values():
+            confirmed = {
+                player.platform_id
+                for player in kickers
+                if (context := context_by_id.get(player.platform_id)) is not None
+                and context.injury_reported
+                and context.active is not False
+            }
+            if len(confirmed) == 1:
+                unconfirmed_kickers.update(
+                    player.platform_id
+                    for player in kickers
+                    if player.platform_id not in confirmed
+                    and (
+                        (context_by_id.get(player.platform_id) is None)
+                        or (
+                            context_by_id[player.platform_id].expected_role or ""
+                        ).strip().casefold() not in {"expanded", "normal"}
+                    )
+                )
+
+    cfb_reserves = {
+        player.platform_id
+        for player in slate.players
+        if slate.sport == Sport.CFB
+        and player.primary_position in {Position.QB, Position.RB, Position.WR, Position.TE}
+        and (context := context_by_id.get(player.platform_id)) is not None
+        and (context.depth_chart_position or 0) >= 90
+        and (context.expected_role or "").strip().casefold()
+        not in {"expanded", "normal"}
+    }
+
+    return frozenset(
+        unavailable
+        | backups
+        | extreme_showdown_punts
+        | unverified_showdown_reserves
+        | unconfirmed_kickers
+        | cfb_reserves
+    )
 
 
 def suggest_max_once_player_ids(

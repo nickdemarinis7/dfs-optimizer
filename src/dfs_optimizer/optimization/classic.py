@@ -10,6 +10,10 @@ from dfs_optimizer.models import Player, Position, Projection, Slate
 from dfs_optimizer.rules import RosterRules, RosterSlot, classic_rules_for
 
 
+CLASSIC_SOLVER_TIME_LIMIT_SECONDS = 5
+CLASSIC_SOLVER_RELATIVE_GAP = .01
+
+
 class LineupOptimizationError(ValueError):
     """Raised when inputs cannot produce a valid Classic lineup."""
 
@@ -32,6 +36,17 @@ class ClassicOptimizationSettings:
     minimum_stack_ceiling: float = 0.0
     minimum_bring_back_ceiling: float = 0.0
     unique_primary_stacks: bool = False
+    minimum_quarterbacks: int = 0
+    minimum_projected_points: float = 0.0
+    maximum_bust_risk_players: int | None = None
+    bust_risk_threshold: float = .375
+    maximum_severe_bust_players: int | None = None
+    severe_bust_risk_threshold: float = .60
+    second_tight_end_minimum_projection: float = 0.0
+    second_tight_end_minimum_floor: float = 0.0
+    second_tight_end_maximum_bust_probability: float = 1.0
+    require_bring_back_for_four_player_team: bool = False
+    avoid_opposing_running_backs: bool = False
 
     def __post_init__(self) -> None:
         if self.locked_player_ids & self.excluded_player_ids:
@@ -59,6 +74,26 @@ class ClassicOptimizationSettings:
             raise ValueError("minimum_stack_projection cannot be negative")
         if self.minimum_stack_ceiling < 0 or self.minimum_bring_back_ceiling < 0:
             raise ValueError("minimum stack and bring-back ceilings cannot be negative")
+        if self.minimum_quarterbacks < 0:
+            raise ValueError("minimum_quarterbacks cannot be negative")
+        if self.minimum_projected_points < 0:
+            raise ValueError("minimum_projected_points cannot be negative")
+        if self.maximum_bust_risk_players is not None and self.maximum_bust_risk_players < 0:
+            raise ValueError("maximum_bust_risk_players cannot be negative")
+        if not 0 <= self.bust_risk_threshold <= 1:
+            raise ValueError("bust_risk_threshold must be between 0 and 1")
+        if self.maximum_severe_bust_players is not None and self.maximum_severe_bust_players < 0:
+            raise ValueError("maximum_severe_bust_players cannot be negative")
+        if not 0 <= self.severe_bust_risk_threshold <= 1:
+            raise ValueError("severe_bust_risk_threshold must be between 0 and 1")
+        if self.second_tight_end_minimum_projection < 0:
+            raise ValueError("second_tight_end_minimum_projection cannot be negative")
+        if self.second_tight_end_minimum_floor < 0:
+            raise ValueError("second_tight_end_minimum_floor cannot be negative")
+        if not 0 <= self.second_tight_end_maximum_bust_probability <= 1:
+            raise ValueError(
+                "second_tight_end_maximum_bust_probability must be between 0 and 1"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +137,7 @@ def generate_classic_lineups(
     maximum_qb_exposure: float = 1.0,
     maximum_dst_exposure: float = 1.0,
     lineup_ceiling_weights: tuple[float, ...] | None = None,
+    minimum_projection_ratio: float = 0.0,
 ) -> tuple[OptimizedLineup, ...]:
     if count < 1:
         raise ValueError("lineup count must be at least 1")
@@ -114,6 +150,8 @@ def generate_classic_lineups(
         raise ValueError("maximum_qb_exposure must be greater than 0 and at most 1")
     if not 0 < maximum_dst_exposure <= 1:
         raise ValueError("maximum_dst_exposure must be greater than 0 and at most 1")
+    if not 0 <= minimum_projection_ratio <= 1:
+        raise ValueError("minimum_projection_ratio must be between 0 and 1")
     if lineup_ceiling_weights is not None:
         if len(lineup_ceiling_weights) != count:
             raise ValueError("lineup_ceiling_weights must contain one value per lineup")
@@ -163,6 +201,11 @@ def generate_classic_lineups(
                 if lineup_ceiling_weights is not None
                 else base_settings.ceiling_weight
             ),
+            minimum_projected_points=max(
+                base_settings.minimum_projected_points,
+                lineups[0].projected_points * minimum_projection_ratio
+                if lineups else 0,
+            ),
         )
         try:
             lineup = _optimize_classic_lineup(
@@ -196,26 +239,80 @@ def generate_classic_3max_portfolio(
     minimum_unique_players: int = 3,
     maximum_player_appearances: int = 2,
     maximum_dst_appearances: int = 1,
-    candidate_count: int = 20,
+    candidate_count: int = 8,
+    minimum_projection_ratio: float = .92,
+    candidate_diagnostics: dict | None = None,
 ) -> tuple[OptimizedLineup, ...]:
-    """Select two balanced lineups and one ceiling lineup as a single portfolio."""
+    """Select two balanced lineups and one ceiling lineup as a single portfolio.
+
+    Eight candidates per objective gives the joint selector sixteen distinct
+    constructions to choose from.  The previous twenty-per-objective search
+    could launch forty sequential CP-SAT solves for only three final entries,
+    causing multi-minute waits with little practical portfolio benefit.
+    """
     if candidate_count < 3:
         raise ValueError("candidate_count must be at least 3")
+    if not 0 <= minimum_projection_ratio <= 1:
+        raise ValueError("minimum_projection_ratio must be between 0 and 1")
     rules = classic_rules_for(slate.platform, slate.sport)
-    balanced_settings = replace(settings, ceiling_weight=0.30)
-    ceiling_settings = replace(settings, ceiling_weight=0.70)
+    balanced_settings = replace(
+        settings,
+        ceiling_weight=0.30,
+        maximum_bust_risk_players=(
+            4 if settings.maximum_bust_risk_players is None
+            else settings.maximum_bust_risk_players
+        ),
+        maximum_severe_bust_players=(
+            0 if settings.maximum_severe_bust_players is None
+            else settings.maximum_severe_bust_players
+        ),
+    )
+    ceiling_settings = replace(
+        settings,
+        ceiling_weight=0.70,
+        # Most top Classic lineups use a bring-back, but not all do. Preserve
+        # it in both balanced entries and let the dedicated ceiling entry win
+        # without one when the slate's strongest construction demands it.
+        require_opponent_bring_back=False,
+        maximum_bust_risk_players=(
+            5 if settings.maximum_bust_risk_players is None
+            else settings.maximum_bust_risk_players
+        ),
+        maximum_severe_bust_players=(
+            1 if settings.maximum_severe_bust_players is None
+            else settings.maximum_severe_bust_players
+        ),
+    )
+    ceiling_bring_back_settings = replace(
+        ceiling_settings,
+        require_opponent_bring_back=settings.require_opponent_bring_back,
+    )
     candidates_by_ids: dict[frozenset[str], OptimizedLineup] = {}
-    for candidate_settings in (balanced_settings, ceiling_settings):
+    candidate_searches = [
+        (balanced_settings, candidate_count),
+        (ceiling_bring_back_settings, candidate_count),
+    ]
+    if settings.require_opponent_bring_back:
+        # Add a small alternative pool rather than replacing the normal
+        # ceiling search. This preserves strong bring-back constructions while
+        # allowing the third entry to exploit the minority of winning scripts
+        # that do not need one, without adding another full expensive search.
+        candidate_searches.append((ceiling_settings, 3))
+    for candidate_settings, search_count in candidate_searches:
         for lineup in generate_classic_lineups(
             slate,
             projection_matches,
-            candidate_count,
+            search_count,
             minimum_unique_players=1,
             rules=rules,
             settings=replace(candidate_settings, limited_player_ids=frozenset()),
             maximum_player_exposure=0.50,
             maximum_qb_exposure=0.50,
-            maximum_dst_exposure=0.50,
+            # The final 3-max portfolio uses three different defenses. Seed
+            # that diversity while building candidates; otherwise the first
+            # several sequential candidates can all consume the same two
+            # defenses and force the joint selector into a weak third lineup.
+            maximum_dst_exposure=0.25,
         ):
             ids = frozenset(entry.player.platform_id for entry in lineup.entries)
             candidates_by_ids.setdefault(ids, lineup)
@@ -224,6 +321,44 @@ def generate_classic_3max_portfolio(
         raise LineupOptimizationError(
             "not enough distinct candidate lineups to build a 3-max portfolio"
         )
+    if candidate_diagnostics is not None:
+        candidate_player_ids = set().union(*(
+            {entry.player.platform_id for entry in lineup.entries}
+            for lineup in candidates
+        ))
+        projected_players = [
+            (player, projection_matches.by_player_id.get(player.platform_id))
+            for player in slate.players
+            if player.platform_id not in settings.excluded_player_ids
+        ]
+        projected_players = [item for item in projected_players if item[1] is not None]
+        absent = sorted(
+            (
+                (player.name, player.primary_position.value, projection.ceiling or 0)
+                for player, projection in projected_players
+                if player.platform_id not in candidate_player_ids
+                and player.primary_position != Position.DST
+            ),
+            key=lambda item: item[2], reverse=True,
+        )[:8]
+        candidate_diagnostics.update({
+            "candidate_count": len(candidates),
+            "player_coverage": (
+                len(candidate_player_ids) / max(1, len(projected_players))
+            ),
+            "quarterbacks_considered": len({
+                entry.player.platform_id
+                for lineup in candidates for entry in lineup.entries
+                if entry.player.primary_position == Position.QB
+            }),
+            "high_ceiling_absences": tuple(
+                {"player": name, "position": position, "ceiling": ceiling}
+                for name, position, ceiling in absent
+            ),
+        })
+    projection_floor = max(
+        lineup.projected_points for lineup in candidates
+    ) * minimum_projection_ratio
     from dfs_optimizer.services.scenarios import simulate_lineups
     scenario_analysis = simulate_lineups(candidates, simulations=750)
 
@@ -234,6 +369,58 @@ def generate_classic_3max_portfolio(
     player_sets = []
     for index, lineup in enumerate(candidates):
         model.add(balanced[index] + ceiling[index] <= 1)
+        quarterback = next(
+            (
+                entry.player for entry in lineup.entries
+                if entry.player.primary_position == Position.QB
+            ),
+            None,
+        )
+        has_bring_back = quarterback is not None and any(
+            entry.player.team == quarterback.opponent
+            and entry.player.primary_position in {
+                Position.RB, Position.WR, Position.TE
+            }
+            for entry in lineup.entries
+        )
+        if settings.require_opponent_bring_back and not has_bring_back:
+            model.add(balanced[index] == 0)
+        balanced_bust_count = sum(
+            (entry.projection.bust_probability or 0)
+            >= balanced_settings.bust_risk_threshold
+            for entry in lineup.entries
+        )
+        balanced_severe_count = sum(
+            (entry.projection.bust_probability or 0)
+            >= balanced_settings.severe_bust_risk_threshold
+            for entry in lineup.entries
+        )
+        ceiling_bust_count = sum(
+            (entry.projection.bust_probability or 0)
+            >= ceiling_settings.bust_risk_threshold
+            for entry in lineup.entries
+        )
+        ceiling_severe_count = sum(
+            (entry.projection.bust_probability or 0)
+            >= ceiling_settings.severe_bust_risk_threshold
+            for entry in lineup.entries
+        )
+        if (
+            balanced_settings.maximum_bust_risk_players is not None
+            and balanced_bust_count > balanced_settings.maximum_bust_risk_players
+        ) or (
+            balanced_settings.maximum_severe_bust_players is not None
+            and balanced_severe_count > balanced_settings.maximum_severe_bust_players
+        ):
+            model.add(balanced[index] == 0)
+        if (
+            ceiling_settings.maximum_bust_risk_players is not None
+            and ceiling_bust_count > ceiling_settings.maximum_bust_risk_players
+        ) or (
+            ceiling_settings.maximum_severe_bust_players is not None
+            and ceiling_severe_count > ceiling_settings.maximum_severe_bust_players
+        ):
+            model.add(ceiling[index] == 0)
         chosen = model.new_bool_var(f"selected_{index}")
         model.add(chosen == balanced[index] + ceiling[index])
         selected.append(chosen)
@@ -280,6 +467,7 @@ def generate_classic_3max_portfolio(
 
     score_scale = 1_000
     role_scores = []
+    quality_penalties = []
     for index, lineup in enumerate(candidates):
         balanced_score = sum(
             _objective_points(entry.projection, balanced_settings) for entry in lineup.entries
@@ -295,17 +483,23 @@ def generate_classic_3max_portfolio(
             round(balanced_score * score_scale) * balanced[index],
             round(ceiling_score * score_scale) * ceiling[index],
         ))
+        projection_shortfall = max(0.0, projection_floor - lineup.projected_points)
+        quality_penalties.append(
+            round(projection_shortfall * score_scale * 5) * selected[index]
+        )
     # A modest quadratic cost around three shared players discourages one pair
     # from consuming the core while another pair becomes needlessly disjoint.
     model.maximize(
         sum(role_scores)
         - sum(overlap_squared * 100 * variable for overlap_squared, variable in pair_penalties)
+        - sum(quality_penalties)
     )
 
     solver = cp_model.CpSolver()
     solver.parameters.num_search_workers = 1
     solver.parameters.random_seed = 0
-    solver.parameters.max_time_in_seconds = 15
+    solver.parameters.max_time_in_seconds = CLASSIC_SOLVER_TIME_LIMIT_SECONDS
+    solver.parameters.relative_gap_limit = CLASSIC_SOLVER_RELATIVE_GAP
     status = solver.solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         raise LineupOptimizationError(
@@ -317,6 +511,11 @@ def generate_classic_3max_portfolio(
     ceiling_lineup = next(
         candidates[index] for index in range(len(candidates)) if solver.value(ceiling[index])
     )
+    if candidate_diagnostics is not None:
+        candidate_diagnostics["selected_projection_range"] = (
+            min(lineup.projected_points for lineup in balanced_lineups + [ceiling_lineup]),
+            max(lineup.projected_points for lineup in balanced_lineups + [ceiling_lineup]),
+        )
     return tuple(balanced_lineups + [ceiling_lineup])
 
 
@@ -400,6 +599,87 @@ def _optimize_classic_lineup(
             <= settings.maximum_fragile_players
         )
 
+    if settings.maximum_bust_risk_players is not None:
+        model.add(
+            sum(
+                selected[index]
+                for index, player in enumerate(projected_players)
+                if (
+                    projection_matches.by_player_id[player.platform_id].bust_probability
+                    or 0
+                ) >= settings.bust_risk_threshold
+            )
+            <= settings.maximum_bust_risk_players
+        )
+
+    if settings.maximum_severe_bust_players is not None:
+        model.add(
+            sum(
+                selected[index]
+                for index, player in enumerate(projected_players)
+                if (
+                    projection_matches.by_player_id[player.platform_id].bust_probability
+                    or 0
+                ) >= settings.severe_bust_risk_threshold
+            )
+            <= settings.maximum_severe_bust_players
+        )
+
+    # A cheap or volatile TE may still fill the required TE slot, but should
+    # not also invite a second TE into FLEX. Double-TE remains available when
+    # every selected TE has a credible independent role and floor.
+    tight_end_indexes = [
+        index for index, player in enumerate(projected_players)
+        if player.primary_position == Position.TE
+    ]
+    risky_flex_tight_ends = [
+        index for index in tight_end_indexes
+        if (
+            projection_matches.by_player_id[
+                projected_players[index].platform_id
+            ].projected_points < settings.second_tight_end_minimum_projection
+            or (
+                projection_matches.by_player_id[
+                    projected_players[index].platform_id
+                ].floor or 0
+            ) < settings.second_tight_end_minimum_floor
+            or (
+                projection_matches.by_player_id[
+                    projected_players[index].platform_id
+                ].bust_probability or 0
+            ) > settings.second_tight_end_maximum_bust_probability
+        )
+    ]
+    for risky_index in risky_flex_tight_ends:
+        model.add(
+            selected[risky_index]
+            + sum(selected[index] for index in tight_end_indexes if index != risky_index)
+            <= 1
+        )
+
+    if settings.minimum_quarterbacks:
+        model.add(
+            sum(
+                selected[index]
+                for index, player in enumerate(projected_players)
+                if player.primary_position == Position.QB
+            )
+            >= settings.minimum_quarterbacks
+        )
+
+    if settings.minimum_projected_points:
+        points_scale = 1_000
+        model.add(
+            sum(
+                round(
+                    projection_matches.by_player_id[player.platform_id].projected_points
+                    * points_scale
+                ) * selected[index]
+                for index, player in enumerate(projected_players)
+            )
+            >= round(settings.minimum_projected_points * points_scale)
+        )
+
     pass_catcher_positions = {"WR", "TE"}
     offensive_positions = {"QB", "RB", "WR", "TE"}
     for qb_index, qb in enumerate(projected_players):
@@ -435,6 +715,16 @@ def _optimize_classic_lineup(
             for offense_index, offense in enumerate(projected_players):
                 if offense.team == dst.opponent and offense.primary_position.value in offensive_positions:
                     model.add(selected[dst_index] + selected[offense_index] <= 1)
+
+    if settings.avoid_opposing_running_backs:
+        running_backs = [
+            (index, player) for index, player in enumerate(projected_players)
+            if player.primary_position == Position.RB
+        ]
+        for left, (left_index, left_player) in enumerate(running_backs):
+            for right_index, right_player in running_backs[left + 1:]:
+                if left_player.team == right_player.opponent:
+                    model.add(selected[left_index] + selected[right_index] <= 1)
 
     for previous_ids, minimum_unique in prior_lineups:
         overlap = [
@@ -474,6 +764,20 @@ def _optimize_classic_lineup(
         model.add(used <= sum(team_assignments))
         if rules.maximum_players_per_team is not None:
             model.add(sum(team_assignments) <= rules.maximum_players_per_team)
+        if settings.require_bring_back_for_four_player_team:
+            opponent_assignments = [
+                selected[index]
+                for index, player in enumerate(projected_players)
+                if player.team != team
+                and player.opponent == team
+                and player.primary_position in {
+                    Position.QB, Position.RB, Position.WR, Position.TE
+                }
+            ]
+            if opponent_assignments:
+                model.add(sum(team_assignments) <= 3 + sum(opponent_assignments))
+            else:
+                model.add(sum(team_assignments) <= 3)
         team_variables.append(used)
     model.add(sum(team_variables) >= rules.minimum_teams)
 
@@ -515,7 +819,8 @@ def _optimize_classic_lineup(
     solver = cp_model.CpSolver()
     solver.parameters.num_search_workers = 1
     solver.parameters.random_seed = 0
-    solver.parameters.max_time_in_seconds = 15
+    solver.parameters.max_time_in_seconds = CLASSIC_SOLVER_TIME_LIMIT_SECONDS
+    solver.parameters.relative_gap_limit = CLASSIC_SOLVER_RELATIVE_GAP
     status = solver.solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         raise LineupOptimizationError(

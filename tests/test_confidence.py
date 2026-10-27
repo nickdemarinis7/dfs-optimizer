@@ -70,6 +70,82 @@ class ProjectionConfidenceTests(unittest.TestCase):
 
         self.assertEqual(scored.projected_points, 17.5)
 
+    def test_high_bust_probability_cannot_be_high_confidence(self) -> None:
+        projection = Projection(
+            self.player.name, self.player.team, 20, platform_id="wr",
+            floor=5, ceiling=40, bust_probability=.50,
+            sample_size=8, opportunity_stability=.90, data_age_periods=0,
+        )
+
+        scored = apply_projection_confidence(
+            self.slate,
+            (projection,),
+            (PlayerContext("wr", 1, None, None, True),),
+            context_age_minutes=10,
+        )[0]
+
+        self.assertEqual(scored.confidence_tier, "Medium")
+        self.assertIn(
+            "confidence capped by modeled bust risk", scored.confidence_reasons
+        )
+
+    def test_questionable_player_cannot_be_high_confidence(self) -> None:
+        projection = Projection(
+            self.player.name, self.player.team, 20, platform_id="wr",
+            floor=14, ceiling=28, bust_probability=.10,
+            sample_size=8, opportunity_stability=.90, data_age_periods=0,
+        )
+
+        scored = apply_projection_confidence(
+            self.slate,
+            (projection,),
+            (PlayerContext("wr", 1, "Questionable", "DNP", True),),
+            context_age_minutes=10,
+        )[0]
+
+        self.assertEqual(scored.confidence_tier, "Medium")
+        self.assertIn(
+            "confidence capped by unresolved availability",
+            scored.confidence_reasons,
+        )
+
+    def test_recent_return_reduces_confidence_until_role_is_confirmed(self) -> None:
+        projection = Projection(
+            self.player.name, self.player.team, 17.5, platform_id="wr",
+            floor=8, ceiling=28, sample_size=6,
+            recent_return_games=1,
+        )
+
+        uncertain = apply_projection_confidence(
+            self.slate, (projection,),
+            (PlayerContext("wr", 1, None, None, True),),
+        )[0]
+        confirmed = apply_projection_confidence(
+            self.slate, (projection,),
+            (PlayerContext(
+                "wr", 1, None, None, True, expected_role="normal"
+            ),),
+        )[0]
+
+        self.assertLess(uncertain.confidence_score, confirmed.confidence_score)
+        self.assertIn("multi-game absence", " ".join(uncertain.confidence_reasons))
+
+    def test_limited_practice_caps_workload_confidence(self) -> None:
+        projection = Projection(
+            self.player.name, self.player.team, 20, platform_id="wr",
+            floor=14, ceiling=28, bust_probability=.10,
+            sample_size=8, opportunity_stability=.90, data_age_periods=0,
+        )
+
+        scored = apply_projection_confidence(
+            self.slate, (projection,),
+            (PlayerContext("wr", 1, None, "Limited Participation", True),),
+            context_age_minutes=10,
+        )[0]
+
+        self.assertEqual(scored.confidence_tier, "Medium")
+        self.assertIn("uncertain workload", " ".join(scored.confidence_reasons))
+
 
 if __name__ == "__main__":
     unittest.main()

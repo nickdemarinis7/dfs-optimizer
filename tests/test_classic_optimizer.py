@@ -12,6 +12,7 @@ from dfs_optimizer.models import (
     Position,
     Projection,
     Slate,
+    Sport,
 )
 from dfs_optimizer.optimization import (
     ClassicOptimizationSettings,
@@ -75,6 +76,38 @@ def make_slate(platform: Platform) -> tuple[Slate, ProjectionMatchResult]:
 
 
 class ClassicOptimizerTests(unittest.TestCase):
+    def test_can_require_two_quarterbacks_for_cfb_superflex(self) -> None:
+        slate, matches = make_slate(Platform.DRAFTKINGS)
+        slate = replace(slate, sport=Sport.CFB)
+
+        lineup = optimize_classic_lineup(
+            slate,
+            matches,
+            settings=ClassicOptimizationSettings(minimum_quarterbacks=2),
+        )
+
+        self.assertEqual(
+            sum(entry.player.primary_position == Position.QB for entry in lineup.entries),
+            2,
+        )
+
+    def test_portfolio_projection_floor_tracks_first_lineup(self) -> None:
+        slate, matches = make_slate(Platform.DRAFTKINGS)
+
+        lineups = generate_classic_lineups(
+            slate,
+            matches,
+            count=2,
+            minimum_unique_players=1,
+            minimum_projection_ratio=.95,
+        )
+
+        self.assertEqual(len(lineups), 2)
+        self.assertGreaterEqual(
+            lineups[1].projected_points,
+            lineups[0].projected_points * .95,
+        )
+
     def test_scales_player_specific_exposure_cap_with_portfolio_size(self) -> None:
         slate, matches = make_slate(Platform.DRAFTKINGS)
         settings = ClassicOptimizationSettings(
@@ -118,6 +151,105 @@ class ClassicOptimizerTests(unittest.TestCase):
         selected_ids = {entry.player.platform_id for entry in lineup.entries}
         self.assertLessEqual(len(selected_ids & fragile_ids), 1)
 
+    def test_can_exclude_severe_bust_players_from_balanced_build(self) -> None:
+        slate, matches = make_slate(Platform.DRAFTKINGS)
+        matches = ProjectionMatchResult(
+            {
+                player_id: replace(
+                    projection,
+                    bust_probability=.65 if player_id in {"rb1", "wr1"} else .20,
+                )
+                for player_id, projection in matches.by_player_id.items()
+            },
+            (),
+            (),
+        )
+
+        lineup = optimize_classic_lineup(
+            slate,
+            matches,
+            settings=ClassicOptimizationSettings(
+                maximum_severe_bust_players=0,
+            ),
+        )
+
+        selected_ids = {entry.player.platform_id for entry in lineup.entries}
+        self.assertFalse(selected_ids & {"rb1", "wr1"})
+
+    def test_weak_tight_end_cannot_be_used_with_second_tight_end(self) -> None:
+        slate, matches = make_slate(Platform.DRAFTKINGS)
+        matches = ProjectionMatchResult(
+            {
+                player_id: replace(
+                    projection,
+                    floor=(2 if player_id == "te2" else 8),
+                    bust_probability=(.50 if player_id == "te2" else .20),
+                )
+                for player_id, projection in matches.by_player_id.items()
+            },
+            (),
+            (),
+        )
+
+        lineup = optimize_classic_lineup(
+            slate,
+            matches,
+            settings=ClassicOptimizationSettings(
+                locked_player_ids=frozenset({"te2"}),
+                second_tight_end_minimum_projection=9,
+                second_tight_end_minimum_floor=4,
+                second_tight_end_maximum_bust_probability=.40,
+            ),
+        )
+
+        self.assertEqual(
+            sum(entry.player.primary_position == Position.TE for entry in lineup.entries),
+            1,
+        )
+
+    def test_avoids_opposing_running_backs(self) -> None:
+        slate, matches = make_slate(Platform.DRAFTKINGS)
+        players = tuple(
+            replace(player, opponent="BBB" if player.platform_id == "rb1" else
+                    "AAA" if player.platform_id == "rb2" else player.opponent)
+            for player in slate.players
+        )
+        slate = replace(slate, players=players)
+
+        lineup = optimize_classic_lineup(
+            slate,
+            matches,
+            settings=ClassicOptimizationSettings(
+                locked_player_ids=frozenset({"rb1"}),
+                avoid_opposing_running_backs=True,
+            ),
+        )
+
+        selected_ids = {entry.player.platform_id for entry in lineup.entries}
+        self.assertNotIn("rb2", selected_ids)
+
+    def test_four_player_team_requires_opponent_bring_back(self) -> None:
+        slate, matches = make_slate(Platform.DRAFTKINGS)
+        players = tuple(
+            replace(player, opponent="AAA")
+            if player.team == "BBB" else player
+            for player in slate.players
+        )
+        slate = replace(slate, players=players)
+
+        lineup = optimize_classic_lineup(
+            slate,
+            matches,
+            settings=ClassicOptimizationSettings(
+                locked_player_ids=frozenset({"qb1", "rb1", "wr1", "te1"}),
+                require_bring_back_for_four_player_team=True,
+            ),
+        )
+
+        self.assertTrue(any(
+            entry.player.team == "BBB" for entry in lineup.entries
+        ))
+
     def test_selects_three_lineups_as_a_joint_portfolio(self) -> None:
         slate, matches = make_slate(Platform.DRAFTKINGS)
         extra_specs = (
@@ -141,6 +273,7 @@ class ClassicOptimizerTests(unittest.TestCase):
             (),
         )
 
+        candidate_diagnostics = {}
         lineups = generate_classic_3max_portfolio(
             slate,
             matches,
@@ -148,6 +281,7 @@ class ClassicOptimizerTests(unittest.TestCase):
                 limited_player_ids=frozenset({"wr1"})
             ),
             candidate_count=8,
+            candidate_diagnostics=candidate_diagnostics,
         )
         appearances = Counter(
             entry.player.platform_id for lineup in lineups for entry in lineup.entries
@@ -159,6 +293,9 @@ class ClassicOptimizerTests(unittest.TestCase):
         self.assertEqual(len(lineups), 3)
         self.assertLessEqual(max(appearances.values()), 2)
         self.assertLessEqual(appearances["wr1"], 1)
+        self.assertGreaterEqual(candidate_diagnostics["candidate_count"], 3)
+        self.assertGreater(candidate_diagnostics["player_coverage"], 0)
+        self.assertGreaterEqual(candidate_diagnostics["quarterbacks_considered"], 1)
         self.assertEqual(
             len({
                 entry.player.platform_id
@@ -171,6 +308,73 @@ class ClassicOptimizerTests(unittest.TestCase):
         for left_index, left in enumerate(player_sets):
             for right in player_sets[left_index + 1:]:
                 self.assertGreaterEqual(len(left - right), 3)
+
+    def test_three_max_keeps_bring_back_for_balanced_entries_only(self) -> None:
+        slate, matches = make_slate(Platform.DRAFTKINGS)
+        opponents = {
+            "AAA": "BBB", "BBB": "AAA", "CCC": "DDD",
+            "DDD": "CCC", "EEE": "AAA",
+        }
+        slate = replace(
+            slate,
+            players=tuple(
+                replace(
+                    item,
+                    opponent=opponents[item.team],
+                    game="@".join(sorted((item.team, opponents[item.team]))),
+                )
+                for item in slate.players
+            ),
+        )
+        extra_pairs = [
+            player(f"wrx{i}", Position.WR, 5_000, 9 - i / 10, team)
+            for i, team in enumerate(("AAA", "BBB", "CCC", "DDD", "AAA", "BBB"))
+        ] + [
+            player(f"dstx{i}", Position.DST, 5_000, 6 - i / 10, team)
+            for i, team in enumerate(("CCC", "DDD", "EEE"))
+        ]
+        adjusted_extras = []
+        for item, projection in extra_pairs:
+            opponent = opponents[item.team]
+            adjusted_extras.append((
+                replace(item, opponent=opponent, game="@".join(sorted((item.team, opponent)))),
+                projection,
+            ))
+        slate = replace(
+            slate, players=slate.players + tuple(item for item, _ in adjusted_extras)
+        )
+        matches = ProjectionMatchResult(
+            matches.by_player_id | {
+                item.platform_id: projection
+                for item, projection in adjusted_extras
+            }, (), (),
+        )
+
+        lineups = generate_classic_3max_portfolio(
+            slate, matches,
+            ClassicOptimizationSettings(
+                qb_stack_size=1,
+                require_opponent_bring_back=True,
+                avoid_dst_opponents=False,
+            ),
+            minimum_unique_players=1,
+            maximum_player_appearances=3,
+            maximum_dst_appearances=3,
+            candidate_count=12,
+        )
+
+        for lineup in lineups[:2]:
+            quarterback = next(
+                entry.player for entry in lineup.entries
+                if entry.player.primary_position == Position.QB
+            )
+            self.assertTrue(any(
+                entry.player.team == quarterback.opponent
+                and entry.player.primary_position in {
+                    Position.RB, Position.WR, Position.TE
+                }
+                for entry in lineup.entries
+            ))
 
     def test_builds_optimal_draftkings_lineup(self) -> None:
         slate, matches = make_slate(Platform.DRAFTKINGS)

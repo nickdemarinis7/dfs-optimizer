@@ -1,12 +1,47 @@
 from __future__ import annotations
 
 import csv
+import re
 from dataclasses import replace
 from pathlib import Path
 
 from dfs_optimizer.models import Projection, Slate
 
 from .projections_csv import ProjectionImportError, match_projections
+
+
+_COLUMN_ALIASES = {
+    "name": {"name", "player", "playername", "nickname"},
+    "team": {"team", "tm", "teamabbrev", "teamabbr"},
+    "projected_ownership": {
+        "projectedownership", "projectedown", "ownership", "own", "ownpct",
+        "projectedownershippct", "projectedownershippercentage", "pown",
+    },
+    "platform_id": {"platformid", "id", "playerid"},
+}
+
+
+def _normalized_header(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.casefold())
+
+
+def _resolve_columns(fieldnames: list[str]) -> dict[str, str]:
+    normalized = {_normalized_header(value): value for value in fieldnames if value}
+    resolved = {
+        canonical: next(
+            (normalized[alias] for alias in aliases if alias in normalized), None
+        )
+        for canonical, aliases in _COLUMN_ALIASES.items()
+    }
+    missing = {
+        name for name in ("name", "team", "projected_ownership")
+        if resolved[name] is None
+    }
+    if missing:
+        raise ProjectionImportError(
+            "ownership file is missing required columns: " + ", ".join(sorted(missing))
+        )
+    return resolved
 
 
 def apply_ownership_csv(
@@ -18,21 +53,19 @@ def apply_ownership_csv(
     source = Path(path)
     with source.open(encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
-        required = {"name", "team", "projected_ownership"}
-        missing = required - set(reader.fieldnames or ())
-        if missing:
-            raise ProjectionImportError(
-                "ownership file is missing required columns: " + ", ".join(sorted(missing))
-            )
+        columns = _resolve_columns(reader.fieldnames or [])
         ownership = []
         for row_number, row in enumerate(reader, 2):
             try:
+                raw_ownership = row[columns["projected_ownership"]].strip().rstrip("%")
                 ownership.append(Projection(
-                    name=row["name"].strip(),
-                    team=row["team"].strip().upper(),
+                    name=row[columns["name"]].strip(),
+                    team=row[columns["team"]].strip().upper(),
                     projected_points=0,
-                    platform_id=(row.get("platform_id") or "").strip() or None,
-                    projected_ownership=float(row["projected_ownership"]),
+                    platform_id=(
+                        row.get(columns["platform_id"] or "", "").strip() or None
+                    ),
+                    projected_ownership=float(raw_ownership),
                 ))
             except (TypeError, ValueError) as exc:
                 raise ProjectionImportError(

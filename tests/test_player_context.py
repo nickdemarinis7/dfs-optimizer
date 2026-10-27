@@ -71,6 +71,15 @@ class PlayerContextTests(unittest.TestCase):
         self.assertIn("Dak Prescott,DAL", text)
         self.assertIn("Depth Receiver,DAL", text)
 
+    def test_context_template_can_focus_on_uncertain_players(self) -> None:
+        text = player_context_csv_template(
+            self.slate, frozenset({"joe"})
+        ).decode()
+
+        self.assertIn("Joe Milton III,DAL", text)
+        self.assertNotIn("Dak Prescott,DAL", text)
+        self.assertNotIn("Depth Receiver,DAL", text)
+
     def test_final_status_overrides_stale_questionable_status(self) -> None:
         final = import_final_status_csv(
             self.slate,
@@ -215,7 +224,7 @@ class PlayerContextTests(unittest.TestCase):
         )
         self.assertEqual(by_id["joe"].depth_chart_position, 3)
 
-    def test_nflverse_merge_preserves_manual_role_report(self) -> None:
+    def test_nflverse_merge_preserves_primary_depth_and_manual_role_report(self) -> None:
         primary = (
             PlayerContext(
                 "dak", 2, "Questionable", None, True, 21.0,
@@ -231,13 +240,35 @@ class PlayerContextTests(unittest.TestCase):
 
         merged = merge_player_context_sources(primary, secondary)
 
-        self.assertEqual(merged[0].depth_chart_position, 1)
+        self.assertEqual(merged[0].depth_chart_position, 2)
         self.assertIsNone(merged[0].injury_status)
         self.assertEqual(merged[0].practice_participation, "Full Participation")
         self.assertTrue(merged[0].active)
         self.assertEqual(merged[0].verified_projection, 21.0)
         self.assertEqual(merged[0].expected_role, "expanded")
         self.assertEqual(merged[0].role_note, "late workload report")
+
+    def test_nflverse_depth_ignores_special_teams_row_for_receiver(self) -> None:
+        with TemporaryDirectory() as directory:
+            depth_path = Path(directory) / "depth.csv"
+            injury_path = Path(directory) / "injuries.csv"
+            depth_path.write_text(
+                "dt,team,player_name,pos_abb,pos_rank\n"
+                "2026-10-18,DAL,Depth Receiver,WR,2\n"
+                "2026-10-18,DAL,Depth Receiver,PR,1\n",
+                encoding="utf-8",
+            )
+            injury_path.write_text(
+                "team,week,full_name,date_modified,report_status,practice_status\n",
+                encoding="utf-8",
+            )
+
+            contexts = match_nflverse_player_context(
+                self.slate, depth_path, injury_path
+            )
+
+        by_id = {item.platform_id: item for item in contexts}
+        self.assertEqual(by_id["wr"].depth_chart_position, 2)
 
     def test_uses_sleeper_depth_chart_order_instead_of_position_label(self) -> None:
         contexts = match_player_context(self.slate, {

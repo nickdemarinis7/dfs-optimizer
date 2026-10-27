@@ -207,6 +207,43 @@ class CurrentRoleAdjustmentTests(unittest.TestCase):
         self.assertEqual(len(audit), 2)
         self.assertTrue(all("pre-lock" in item.reason for item in audit))
 
+    def test_rb3_is_reduced_when_healthy_rb1_returns(self) -> None:
+        players = (
+            Player(
+                "rb1", "Returning starter", Position.RB, (Position.RB,),
+                8000, "GB", "CHI", "GB@CHI",
+            ),
+            Player(
+                "rb3", "Temporary contributor", Position.RB, (Position.RB,),
+                5000, "GB", "CHI", "GB@CHI",
+            ),
+        )
+        slate = Slate(
+            Platform.FANDUEL, ContestFormat.CLASSIC, players, "test"
+        )
+        projections = (
+            Projection("Returning starter", "GB", 17, platform_id="rb1"),
+            Projection(
+                "Temporary contributor", "GB", 10, platform_id="rb3",
+                floor=3, ceiling=20, p10=1, p25=4, p75=14, p90=22,
+                bust_probability=.40, opportunity_stability=.90,
+            ),
+        )
+        contexts = (
+            PlayerContext("rb1", 1, None, None, True),
+            PlayerContext("rb3", 3, None, None, True),
+        )
+
+        adjusted, audit = apply_current_role_adjustments(
+            slate, projections, contexts
+        )
+
+        by_id = {item.platform_id: item for item in adjusted}
+        self.assertAlmostEqual(by_id["rb3"].projected_points, 6)
+        self.assertAlmostEqual(by_id["rb3"].floor, 1.8)
+        self.assertGreater(by_id["rb3"].bust_probability, .40)
+        self.assertIn("active RB1", audit[0].reason)
+
     def test_guardrails_severely_depressed_healthy_starter_projection(self) -> None:
         player = Player(
             "qb1", "Healthy starter", Position.QB, (Position.QB,),
@@ -319,8 +356,8 @@ class CurrentRoleAdjustmentTests(unittest.TestCase):
         )
 
         by_id = {item.platform_id: item for item in adjusted}
-        self.assertAlmostEqual(by_id["rb2"].projected_points, 9.13)
-        self.assertAlmostEqual(by_id["rb2"].ceiling, 4.2 * (9.13 / 2.16))
+        self.assertAlmostEqual(by_id["rb2"].projected_points, 2.16 * 1.35)
+        self.assertAlmostEqual(by_id["rb2"].ceiling, 4.2 * 1.35)
         self.assertEqual(by_id["rb3"].projected_points, 3.2)
         self.assertEqual(len(audit), 1)
         self.assertIn("unavailable player", audit[0].reason)
@@ -350,10 +387,79 @@ class CurrentRoleAdjustmentTests(unittest.TestCase):
             slate, (projection,), contexts
         )
 
-        self.assertAlmostEqual(adjusted[0].projected_points, 8.8)
-        self.assertAlmostEqual(adjusted[0].ceiling, 19.8)
+        self.assertAlmostEqual(adjusted[0].projected_points, 5.4)
+        self.assertAlmostEqual(adjusted[0].ceiling, 12.15)
         self.assertEqual(len(audit), 1)
         self.assertIn("WR", audit[0].reason)
+
+    def test_promoted_receiver_gets_role_aware_upside_range(self) -> None:
+        players = (
+            Player(
+                "wr1", "Unavailable receiver", Position.WR, (Position.WR,),
+                9000, "PHI", "DAL", "DAL@PHI", status="OUT",
+                platform_average=15.0,
+            ),
+            Player(
+                "wr2", "Promoted receiver", Position.WR, (Position.WR,),
+                5000, "PHI", "DAL", "DAL@PHI", platform_average=9.2,
+            ),
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, players, "test"
+        )
+        projection = Projection(
+            "Promoted receiver", "PHI", 9.2, platform_id="wr2",
+            floor=4.0, ceiling=9.5, p10=2.5, p25=4.0,
+            p75=9.2, p90=9.5,
+        )
+        contexts = (PlayerContext("wr2", 2, None, None, True),)
+
+        adjusted, _ = apply_current_role_adjustments(
+            slate, (projection,), contexts
+        )
+
+        self.assertAlmostEqual(adjusted[0].projected_points, 10.12)
+        self.assertGreaterEqual(
+            adjusted[0].ceiling, adjusted[0].projected_points * 1.8
+        )
+        self.assertEqual(adjusted[0].p90, adjusted[0].ceiling)
+
+    def test_promotes_first_reserve_even_when_his_platform_average_is_higher(self) -> None:
+        players = (
+            Player(
+                "out", "Unavailable receiver", Position.WR, (Position.WR,),
+                7600, "NE", "CHI", "NE@CHI", platform_average=9.7,
+                status="IR",
+            ),
+            Player(
+                "wr2", "Established WR2", Position.WR, (Position.WR,),
+                6800, "NE", "CHI", "NE@CHI", platform_average=10.1,
+            ),
+            Player(
+                "wr3", "Reserve WR3", Position.WR, (Position.WR,),
+                3200, "NE", "CHI", "NE@CHI", platform_average=5.1,
+            ),
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, players, "test"
+        )
+        projections = (
+            Projection("Established WR2", "NE", 10, platform_id="wr2"),
+            Projection("Reserve WR3", "NE", 5, platform_id="wr3"),
+        )
+        contexts = (
+            PlayerContext("wr2", 2, None, None, True),
+            PlayerContext("wr3", 3, None, None, True),
+        )
+
+        adjusted, audit = apply_current_role_adjustments(
+            slate, projections, contexts
+        )
+
+        by_id = {item.platform_id: item for item in adjusted}
+        self.assertAlmostEqual(by_id["wr2"].projected_points, 11.11)
+        self.assertEqual(by_id["wr3"].projected_points, 5)
+        self.assertEqual([item.player for item in audit], ["Established WR2"])
 
     def test_does_not_guardrail_low_volume_fullback_listed_first(self) -> None:
         player = Player(

@@ -105,6 +105,20 @@ def apply_opportunity_risk(
         expected_role = (
             (context.expected_role or "").strip().casefold() if context else ""
         )
+        practice = (
+            (context.practice_participation or "").strip().upper()
+            if context else ""
+        )
+        recent_return = (
+            projection.recent_return_games is not None
+            and projection.recent_return_games <= 2
+            and expected_role not in {"expanded", "normal"}
+        )
+        if recent_return:
+            score -= 15
+            reasons.append(
+                f"game {projection.recent_return_games} after a multi-game absence"
+            )
         if expected_role == "expanded":
             score += 12
             reasons.append("confirmed expanded pre-lock role")
@@ -122,6 +136,13 @@ def apply_opportunity_risk(
         elif status in {"D", "DOUBTFUL", "Q", "QUESTIONABLE"}:
             score -= 12
             reasons.append(f"{status.lower()} availability")
+        if expected_role not in {"expanded", "normal"}:
+            if practice in {"DNP", "DID NOT PARTICIPATE"}:
+                score -= 15
+                reasons.append("did not practice before lock")
+            elif practice in {"LIMITED", "LIMITED PARTICIPATION"}:
+                score -= 10
+                reasons.append("limited practice before lock")
         if depth is not None and expected_role not in {"expanded", "normal"}:
             leader_confirmed = (player.team, player.primary_position) in healthy_leaders
             if player.primary_position == Position.TE and depth >= 2 and leader_confirmed:
@@ -173,6 +194,14 @@ def apply_opportunity_risk(
             return max(projection.projected_points, adjusted) if at_least_median else adjusted
 
         adjusted_bust = bust
+        missing_props = projection.prop_coverage_checked and prop_count == 0
+        if expected_role not in {"expanded", "normal"} and missing_props:
+            if practice in {"DNP", "DID NOT PARTICIPATE"}:
+                adjusted_bust = max(adjusted_bust or 0, .55)
+            elif practice in {"LIMITED", "LIMITED PARTICIPATION"}:
+                adjusted_bust = max(adjusted_bust or 0, .45)
+        if recent_return:
+            adjusted_bust = max(adjusted_bust or 0, .50)
         if tier == "Fragile":
             adjusted_bust = max(bust or 0, .65)
         elif tier == "Watch":
@@ -188,11 +217,15 @@ def apply_opportunity_risk(
         )
         if adjusted_p75 is not None and adjusted_p90 is not None:
             adjusted_p75 = min(adjusted_p75, adjusted_p90)
+        return_factor = .75 if recent_return else 1.0
         updated = replace(
             projection,
-            floor=lower(projection.floor, factor),
-            p10=lower(projection.p10, factor),
-            p25=lower(projection.p25, .60 if tier == "Fragile" else factor),
+            floor=lower(projection.floor, factor * return_factor),
+            p10=lower(projection.p10, factor * return_factor),
+            p25=lower(
+                projection.p25,
+                (.60 if tier == "Fragile" else factor) * return_factor,
+            ),
             p75=adjusted_p75,
             p90=adjusted_p90,
             ceiling=lower(projection.ceiling, .90 if tier == "Fragile" else 1.0, at_least_median=True),

@@ -15,11 +15,32 @@ from dfs_optimizer.services.cfb_projections import (
     infer_cfb_season,
     infer_cfb_week,
     restore_verified_cfb_starters,
+    historically_verified_cfb_player_ids,
 )
 from dfs_optimizer.data_sources import CFBConsensusLine
 
 
 class CFBProjectionTests(unittest.TestCase):
+    def test_recent_repeated_usage_clears_routine_availability_gate(self) -> None:
+        projections = (
+            Projection(
+                "Established Player", "AAA", 15, platform_id="established",
+                sample_size=5, data_age_periods=0,
+            ),
+            Projection(
+                "One Game Player", "AAA", 10, platform_id="new",
+                sample_size=1, data_age_periods=0,
+            ),
+            Projection(
+                "Stale Player", "AAA", 9, platform_id="stale",
+                sample_size=5, data_age_periods=2,
+            ),
+        )
+
+        verified = historically_verified_cfb_player_ids(projections)
+
+        self.assertEqual(verified, frozenset({"established"}))
+
     def setUp(self) -> None:
         self.slate = Slate(
             Platform.DRAFTKINGS,
@@ -87,6 +108,29 @@ class CFBProjectionTests(unittest.TestCase):
         ids = {item.platform_id for item in projections}
         self.assertIn("qb", ids)
         self.assertNotIn("backup", ids)
+
+    def test_qb_injury_absence_is_not_scored_as_zero_when_no_teammate_replaced_him(self) -> None:
+        headers = (
+            "game_id,season,week,team,opponent,completion_player,completion_yds,"
+            "rush_player,rush_yds,reception_player,reception_yds,target_player,"
+            "interception_thrown_player,interception_thrown_stat,touchdown_player\n"
+        )
+        rows = (
+            "1,2026,1,Alpha,Beta,Example Quarterback,300,,,,,,,,\n"
+            # Establish that Alpha played in Week 2 without recording another
+            # slate quarterback, as happens during an injury absence.
+            "2,2026,2,Alpha,Gamma,,,,,Some Receiver,20,Some Receiver,,,\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "stats.csv"
+            source.write_text(headers + rows, encoding="utf-8")
+            projections = build_cfb_projections_from_file(self.slate, source, 3)
+
+        quarterback = next(
+            item for item in projections if item.platform_id == "qb"
+        )
+        self.assertGreater(quarterback.projected_points, 10)
+        self.assertGreater(quarterback.ceiling, quarterback.projected_points)
 
     def test_restores_only_explicitly_verified_new_starter(self) -> None:
         from dfs_optimizer.services.player_context import PlayerContext
@@ -302,6 +346,40 @@ class CFBProjectionTests(unittest.TestCase):
         self.assertEqual(matched, 1)
         self.assertIn("AAA,BBB,55,-7", content)
         self.assertIn("BBB,AAA,55,7", content)
+
+    def test_consensus_prefers_most_specific_nested_team_name(self) -> None:
+        slate = Slate(
+            Platform.DRAFTKINGS,
+            ContestFormat.CLASSIC,
+            (
+                Player(
+                    "ucla-qb", "UCLA Quarterback", Position.QB,
+                    (Position.QB, Position.SUPER_FLEX), 8000,
+                    "UCLA", "MSU", "MSU@UCLA 10/24/2026 03:30PM ET",
+                    platform_average=20,
+                ),
+                Player(
+                    "msu-qb", "Michigan State Quarterback", Position.QB,
+                    (Position.QB, Position.SUPER_FLEX), 7000,
+                    "MSU", "UCLA", "MSU@UCLA 10/24/2026 03:30PM ET",
+                    platform_average=15,
+                ),
+            ),
+            "DKSalaries-2026.csv",
+            Sport.CFB,
+        )
+
+        content, matched = cfb_consensus_lines_csv(
+            slate,
+            (CFBConsensusLine(
+                "UCLA Bruins", "Michigan State Spartans", 43.5, -16.5, 16.5
+            ),),
+            {"MICH": "Michigan", "MSU": "Michigan State", "UCLA": "UCLA"},
+        )
+
+        self.assertEqual(matched, 1)
+        self.assertIn("UCLA,MSU,43.5,-16.5", content)
+        self.assertIn("MSU,UCLA,43.5,16.5", content)
 
     def test_consensus_ignores_future_cross_slate_matchups(self) -> None:
         slate = Slate(

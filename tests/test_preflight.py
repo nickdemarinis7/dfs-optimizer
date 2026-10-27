@@ -4,7 +4,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from dfs_optimizer.models import Platform
+from dfs_optimizer.models import Platform, Sport
 from dfs_optimizer.optimization import generate_classic_lineups
 from dfs_optimizer.services import PlayerContext, preflight_lineups
 from test_classic_optimizer import make_slate
@@ -219,6 +219,24 @@ class PreflightTests(unittest.TestCase):
 
         self.assertIn("selected_player_questionable", codes)
         self.assertIn("selected_player_context_unmatched", codes)
+
+    def test_recent_repeated_cfb_usage_suppresses_unmatched_warning(self) -> None:
+        cfb_slate = replace(self.slate, sport=Sport.CFB)
+        cfb_projections = tuple(
+            replace(item, sample_size=4, data_age_periods=0)
+            for item in self.projections
+        )
+
+        report = preflight_lineups(
+            cfb_slate,
+            cfb_projections,
+            self.lineups,
+        )
+
+        self.assertFalse(any(
+            item.code == "selected_player_context_unmatched"
+            for item in report.findings
+        ))
 
 
 if __name__ == "__main__":

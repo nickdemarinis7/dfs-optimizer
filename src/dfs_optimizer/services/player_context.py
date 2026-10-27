@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from dfs_optimizer.data_sources.sleeper import load_sleeper_players
 from dfs_optimizer.data_sources.nflverse import download_nflverse_current_context
+from dfs_optimizer.data_sources.cfb_depth_charts import CFBDepthChartEntry
 from dfs_optimizer.models import Position, Slate
 
 
@@ -119,7 +120,13 @@ def merge_player_context_sources(
     primary: tuple[PlayerContext, ...],
     secondary: tuple[PlayerContext, ...],
 ) -> tuple[PlayerContext, ...]:
-    """Merge current sources while preserving manual-only context fields."""
+    """Merge current sources while preserving manual-only context fields.
+
+    Sleeper's depth order is the primary depth-chart signal.  nflverse is a
+    useful fallback and the preferred injury-report feed, but its ``pos_rank``
+    can describe a personnel grouping rather than a team's published order.
+    It therefore must not replace an already matched Sleeper depth value.
+    """
     merged = {item.platform_id: item for item in primary}
     for item in secondary:
         current = merged.get(item.platform_id)
@@ -128,7 +135,7 @@ def merge_player_context_sources(
             continue
         merged[item.platform_id] = PlayerContext(
             item.platform_id,
-            item.depth_chart_position or current.depth_chart_position,
+            current.depth_chart_position or item.depth_chart_position,
             item.injury_status if item.injury_reported else current.injury_status,
             (
                 item.practice_participation
@@ -300,8 +307,13 @@ def match_nflverse_player_context(
                 rank = int(float(row.get("pos_rank") or ""))
             except ValueError:
                 continue
+            player = players_by_key.get(key)
+            if player is None or not _nflverse_position_matches(
+                player.primary_position, row.get("pos_abb")
+            ):
+                continue
             timestamp = row.get("dt") or ""
-            if key in players_by_key and (key not in depth_rows or timestamp >= depth_rows[key][0]):
+            if key not in depth_rows or timestamp >= depth_rows[key][0]:
                 depth_rows[key] = (timestamp, rank)
 
     injury_rows: dict[tuple[str, str], tuple[int, str, str | None, str | None]] = {}
@@ -341,6 +353,24 @@ def match_nflverse_player_context(
             injury_reported=injury is not None,
         ))
     return tuple(contexts)
+
+
+def _nflverse_position_matches(
+    player_position: Position, nflverse_position: str | None
+) -> bool:
+    """Reject special-teams/secondary rows for offensive slate players."""
+    value = (nflverse_position or "").strip().upper()
+    if not value:
+        # Older fixture files did not include pos_abb.
+        return True
+    allowed = {
+        Position.QB: {"QB"},
+        Position.RB: {"RB", "FB"},
+        Position.WR: {"WR", "LWR", "RWR", "SWR"},
+        Position.TE: {"TE"},
+        Position.K: {"K", "PK"},
+    }.get(player_position)
+    return allowed is None or value in allowed
 
 
 def _current_nflverse_context_paths(
@@ -466,8 +496,10 @@ def import_player_context_csv(
     return tuple(contexts)
 
 
-def player_context_csv_template(slate: Slate) -> bytes:
-    """Return an editable pre-lock context template for the current slate."""
+def player_context_csv_template(
+    slate: Slate, player_ids: frozenset[str] | None = None
+) -> bytes:
+    """Return an editable pre-lock context template for all or selected players."""
     output = io.StringIO(newline="")
     writer = csv.writer(output)
     writer.writerow((
@@ -477,7 +509,15 @@ def player_context_csv_template(slate: Slate) -> bytes:
         "expected_role",
         "role_note",
     ))
-    for player in sorted(slate.players, key=lambda item: (item.team, item.name)):
+    selected_players = (
+        slate.players
+        if player_ids is None
+        else tuple(
+            player for player in slate.players
+            if player.platform_id in player_ids
+        )
+    )
+    for player in sorted(selected_players, key=lambda item: (item.team, item.name)):
         writer.writerow((
             player.name, player.team, player.status or "", "", "", "", "", "", "",
         ))
@@ -628,6 +668,52 @@ def match_player_context(
                 _text(record.get("injury_status"))
                 or _text(record.get("practice_participation"))
             ),
+        ))
+    return tuple(contexts)
+
+
+def match_cfb_depth_chart_context(
+    slate: Slate,
+    entries: tuple[CFBDepthChartEntry, ...],
+) -> tuple[PlayerContext, ...]:
+    """Match current CFB depth order to salary-file players."""
+    by_key: dict[tuple[str, str], list[CFBDepthChartEntry]] = {}
+    for entry in entries:
+        by_key.setdefault(
+            (entry.team.upper(), _normalize(entry.name)), []
+        ).append(entry)
+
+    contexts = []
+    for player in slate.players:
+        candidates = by_key.get(
+            (player.team.upper(), _normalize(player.name)), ()
+        )
+        position_matches = tuple(
+            item for item in candidates
+            if (
+                item.position == player.primary_position.value
+                # DraftKings and FanDuel commonly place college tight ends in
+                # the WR roster bucket. Ourlads retains their true TE room.
+                or {
+                    item.position, player.primary_position.value
+                } == {"WR", "TE"}
+            )
+            or getattr(item, "reserve", False)
+        )
+        if len(position_matches) != 1:
+            continue
+        matched = position_matches[0]
+        is_reserve = getattr(matched, "reserve", False)
+        contexts.append(PlayerContext(
+            platform_id=player.platform_id,
+            # Reserve is a separate Ourlads category rather than an ordinary
+            # position-room rank. Keep it clearly beyond the playable chart.
+            depth_chart_position=99 if is_reserve else matched.depth,
+            injury_status=None,
+            practice_participation=None,
+            active=None,
+            expected_role="limited" if is_reserve else None,
+            role_note="Listed under Ourlads reserves" if is_reserve else None,
         ))
     return tuple(contexts)
 

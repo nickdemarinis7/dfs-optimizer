@@ -8,8 +8,14 @@ from dfs_optimizer.models import ContestFormat, Position, Projection, Slate, Spo
 from dfs_optimizer.rules import classic_rules_for, single_game_rules_for
 
 
-NFL_SHOWDOWN_OWNERSHIP_MODEL_VERSION = "nfl-showdown-v1"
-NFL_CLASSIC_OWNERSHIP_MODEL_VERSION = "nfl-classic-v1"
+NFL_SHOWDOWN_OWNERSHIP_MODEL_VERSION = "nfl-showdown-v2"
+NFL_CLASSIC_OWNERSHIP_MODEL_VERSION = "nfl-classic-v2"
+
+# Version 1 spread too much ownership across fringe players. A modestly
+# sharper softmax improved held-out contest ownership error without forcing
+# every slate toward a handful of maximum-owned players.
+NFL_CLASSIC_OWNERSHIP_TEMPERATURE = 1.35
+NFL_SHOWDOWN_OWNERSHIP_TEMPERATURE = 1.15
 
 
 def estimate_nfl_ownership(
@@ -33,7 +39,7 @@ def estimate_nfl_classic_ownership(
         item for item in projections
         if item.platform_id in players and item.projected_points > 0
     )
-    if not eligible or any(item.projected_ownership is not None for item in eligible):
+    if not eligible or all(item.projected_ownership is not None for item in eligible):
         return projections
 
     points = _percentile_ranks({item.platform_id: item.projected_points for item in eligible})
@@ -57,20 +63,31 @@ def estimate_nfl_classic_ownership(
     for position_values in by_position.values():
         position_scores.update(_percentile_ranks(position_values))
 
+    missing = tuple(item for item in eligible if item.projected_ownership is None)
     weights = {
         item.platform_id: math.exp(
-            1.55 * points[item.platform_id]
-            + 1.15 * values[item.platform_id]
-            + .55 * ceilings[item.platform_id]
-            + .25 * salaries[item.platform_id]
-            + .45 * position_scores[item.platform_id]
+            NFL_CLASSIC_OWNERSHIP_TEMPERATURE * (
+                1.55 * points[item.platform_id]
+                + 1.15 * values[item.platform_id]
+                + .55 * ceilings[item.platform_id]
+                + .25 * salaries[item.platform_id]
+                + .45 * position_scores[item.platform_id]
+            )
         )
-        for item in eligible
+        for item in missing
     }
     roster_slots = classic_rules_for(slate.platform, slate.sport).lineup_size
-    ownership = _scale_with_cap(weights, roster_slots * 100.0, cap=45.0)
+    provided_total = sum(
+        item.projected_ownership or 0 for item in eligible
+        if item.projected_ownership is not None
+    )
+    ownership = _scale_with_cap(
+        weights, max(0.0, roster_slots * 100.0 - provided_total), cap=45.0
+    )
     return tuple(
-        replace(item, projected_ownership=round(ownership.get(item.platform_id, 0), 2))
+        item if item.projected_ownership is not None else replace(
+            item, projected_ownership=round(ownership.get(item.platform_id, 0), 2)
+        )
         for item in projections
     )
 
@@ -102,7 +119,7 @@ def estimate_nfl_showdown_ownership(
         projection for projection in projections
         if projection.platform_id in players and projection.projected_points > 0
     )
-    if not eligible or any(item.projected_ownership is not None for item in eligible):
+    if not eligible or all(item.projected_ownership is not None for item in eligible):
         return projections
 
     points = _percentile_ranks({
@@ -129,20 +146,29 @@ def estimate_nfl_showdown_ownership(
     for position_values in by_position.values():
         position_scores.update(_percentile_ranks(position_values))
 
+    missing = tuple(item for item in eligible if item.projected_ownership is None)
     weights = {
         item.platform_id: math.exp(
-            1.65 * points[item.platform_id]
-            + 1.20 * values[item.platform_id]
-            + .35 * salaries[item.platform_id]
-            + .70 * ceilings[item.platform_id]
-            + .35 * position_scores[item.platform_id]
+            NFL_SHOWDOWN_OWNERSHIP_TEMPERATURE * (
+                1.65 * points[item.platform_id]
+                + 1.20 * values[item.platform_id]
+                + .35 * salaries[item.platform_id]
+                + .70 * ceilings[item.platform_id]
+                + .35 * position_scores[item.platform_id]
+            )
         )
-        for item in eligible
+        for item in missing
     }
     roster_slots = single_game_rules_for(slate.platform).lineup_size
-    ownership = _scale_with_cap(weights, roster_slots * 100.0, cap=85.0)
+    provided_total = sum(
+        item.projected_ownership or 0 for item in eligible
+        if item.projected_ownership is not None
+    )
+    ownership = _scale_with_cap(
+        weights, max(0.0, roster_slots * 100.0 - provided_total), cap=85.0
+    )
     return tuple(
-        replace(
+        item if item.projected_ownership is not None else replace(
             item,
             projected_ownership=round(ownership.get(item.platform_id, 0.0), 2),
         )

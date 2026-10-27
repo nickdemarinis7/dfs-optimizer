@@ -115,6 +115,79 @@ class OpportunityRiskTests(unittest.TestCase):
         self.assertNotIn("low modeled bust", " ".join(assessments[0].reasons))
         self.assertGreaterEqual(adjusted[0].bust_probability, .45)
 
+    def test_unconfirmed_injury_return_widens_downside(self) -> None:
+        player = Player(
+            "wr1", "Returning Receiver", Position.WR,
+            (Position.WR, Position.FLEX), 8000, "NE", "CHI", "NE@CHI",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, (player,), "test"
+        )
+        projection = Projection(
+            player.name, player.team, 15, platform_id=player.platform_id,
+            floor=8, ceiling=28, p10=5, p25=9, p75=19, p90=29,
+            bust_probability=.25, opportunity_stability=.8,
+            recent_return_games=1,
+        )
+
+        adjusted, assessments = apply_opportunity_risk(
+            slate, (projection,),
+            (PlayerContext("wr1", 1, None, None, True),),
+        )
+
+        self.assertEqual(adjusted[0].projected_points, 15)
+        self.assertEqual(adjusted[0].bust_probability, .5)
+        self.assertLess(adjusted[0].floor, projection.floor)
+        self.assertIn("multi-game absence", " ".join(assessments[0].reasons))
+
+    def test_confirmed_normal_role_suppresses_return_penalty(self) -> None:
+        player = Player(
+            "wr1", "Returning Receiver", Position.WR,
+            (Position.WR, Position.FLEX), 8000, "NE", "CHI", "NE@CHI",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME, (player,), "test"
+        )
+        projection = Projection(
+            player.name, player.team, 15, platform_id=player.platform_id,
+            floor=8, ceiling=28, bust_probability=.25,
+            opportunity_stability=.8, recent_return_games=1,
+        )
+
+        adjusted, assessments = apply_opportunity_risk(
+            slate, (projection,),
+            (PlayerContext(
+                "wr1", 1, None, None, True, expected_role="normal"
+            ),),
+        )
+
+        self.assertEqual(adjusted[0].bust_probability, .25)
+        self.assertNotIn("multi-game absence", " ".join(assessments[0].reasons))
+
+    def test_limited_practice_without_props_marks_workload_uncertain(self) -> None:
+        player = Player(
+            "rb1", "Returning starter", Position.RB,
+            (Position.RB, Position.FLEX), 7000, "MIN", "GB", "MIN@GB",
+        )
+        slate = Slate(
+            Platform.DRAFTKINGS, ContestFormat.CLASSIC, (player,), "test"
+        )
+        projection = Projection(
+            player.name, player.team, 18, platform_id=player.platform_id,
+            floor=11, ceiling=25, bust_probability=.15,
+            opportunity_stability=.85, prop_market_count=0,
+            prop_coverage_checked=True,
+        )
+
+        adjusted, assessments = apply_opportunity_risk(
+            slate, (projection,),
+            (PlayerContext("rb1", 1, None, "Limited Participation", True),),
+        )
+
+        self.assertGreaterEqual(adjusted[0].bust_probability, .45)
+        self.assertIn("limited practice", " ".join(assessments[0].reasons))
+        self.assertIn("no player props", " ".join(assessments[0].reasons))
+
 
 if __name__ == "__main__":
     unittest.main()

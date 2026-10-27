@@ -13,6 +13,10 @@ from .classic import LineupOptimizationError
 # kickers or a kicker/defense pairing. One remains a useful user-selected
 # constraint, but it is too restrictive as the tournament default.
 DEFAULT_SHOWDOWN_MAX_KICKERS_AND_DEFENSES = 2
+# Both DK and FD Week 7 winners used 5-1 builds, and the verified top-one-percent
+# bands averaged well above four players from their most-used team. Keep 4-2
+# available as an expert choice without making it the tournament default.
+DEFAULT_SHOWDOWN_MAX_PLAYERS_PER_TEAM = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +48,7 @@ class OptimizedSingleGameLineup:
 class SingleGameOptimizationSettings:
     multiplier_positions: frozenset[Position] | None = None
     minimum_multiplier_ceiling: float = 0.0
+    maximum_multiplier_bust_probability: float | None = None
     minimum_quarterbacks: int = 0
     minimum_quarterback_projection: float = 0.0
     minimum_player_projection: float = 0.0
@@ -63,6 +68,13 @@ class SingleGameOptimizationSettings:
     def __post_init__(self) -> None:
         if self.minimum_multiplier_ceiling < 0:
             raise ValueError("minimum_multiplier_ceiling cannot be negative")
+        if (
+            self.maximum_multiplier_bust_probability is not None
+            and not 0 <= self.maximum_multiplier_bust_probability <= 1
+        ):
+            raise ValueError(
+                "maximum multiplier bust probability must be between 0 and 1"
+            )
         if self.minimum_quarterbacks < 0:
             raise ValueError("minimum_quarterbacks cannot be negative")
         if self.minimum_quarterback_projection < 0 or self.minimum_player_projection < 0:
@@ -162,6 +174,7 @@ def generate_single_game_3max_portfolio(
     candidate_count: int = 24,
     maximum_median_spread: float = 30.0,
     minimum_p90_ratio: float = .80,
+    universal_core_player_ids: frozenset[str] = frozenset(),
 ) -> tuple[OptimizedSingleGameLineup, ...]:
     """Select two balanced builds and one highest-ceiling build jointly."""
     if not 0 < minimum_p90_ratio <= 1:
@@ -229,7 +242,36 @@ def generate_single_game_3max_portfolio(
                     frozenset(entry.player.platform_id for entry in lineup.entries),
                 )
                 candidates_by_key.setdefault(key, lineup)
-    candidates = tuple(candidates_by_key.values())
+    # The Captain-specific search can produce several nearly identical variants
+    # for every player. Feeding all of them into the joint model creates a
+    # quadratic number of overlap variables and can exhaust the solver limit
+    # before it finds even a feasible portfolio. Retain the strongest five for
+    # each Captain so every multiplier path remains represented without hundreds
+    # of redundant pairwise constraints.
+    candidates_by_captain: dict[str, list[OptimizedSingleGameLineup]] = {}
+    for lineup in candidates_by_key.values():
+        candidates_by_captain.setdefault(
+            lineup.entries[0].player.platform_id, []
+        ).append(lineup)
+
+    def seed_score(lineup: OptimizedSingleGameLineup) -> float:
+        return sum(
+            (
+                entry.projection.projected_points * .55
+                + (entry.projection.ceiling or entry.projection.projected_points) * .45
+            ) * entry.point_multiplier
+            for entry in lineup.entries
+        )
+
+    candidates = tuple(
+        lineup
+        for captain_id in sorted(candidates_by_captain)
+        for lineup in sorted(
+            candidates_by_captain[captain_id],
+            key=seed_score,
+            reverse=True,
+        )[:5]
+    )
     if len(candidates) < 3:
         raise LineupOptimizationError("not enough Showdown candidates for a 3-max portfolio")
     from dfs_optimizer.services.scenarios import simulate_lineups
@@ -258,8 +300,37 @@ def generate_single_game_3max_portfolio(
     model.add(sum(balanced) == 2)
     model.add(sum(ceiling) == 1)
 
+    # A three-entry tournament portfolio should represent a genuine receiver
+    # eruption when the slate offers one. Require one WR/TE Captain from the
+    # stable, asymmetric-ceiling candidates; shallow returners and merely
+    # salary-efficient pass catchers do not qualify. The constraint is skipped
+    # when the slate has no such candidate.
+    players_by_id = {player.platform_id: player for player in slate.players}
+    stable_receiver_captains = {
+        player_id
+        for player_id, projection in projection_matches.by_player_id.items()
+        if players_by_id[player_id].primary_position in {Position.WR, Position.TE}
+        and (projection.bust_probability or 0) <= .45
+        and (projection.opportunity_stability or 0) >= .70
+        and (projection.ceiling or projection.projected_points)
+        >= projection.projected_points * 1.40
+    }
+    eligible_receiver_captain_indexes = [
+        i for i, captain_id in enumerate(captain_ids)
+        if captain_id in stable_receiver_captains
+        and scenario_analysis[i].p90 >= minimum_candidate_p90
+    ]
+    if eligible_receiver_captain_indexes:
+        model.add(sum(
+            selected[i] for i in eligible_receiver_captain_indexes
+        ) >= 1)
+
     for player_id in set().union(*player_sets):
-        appearance_limit = 1 if player_id in settings.limited_player_ids else 2
+        appearance_limit = (
+            1
+            if player_id in settings.limited_player_ids
+            else 3 if player_id in universal_core_player_ids else 2
+        )
         model.add(sum(
             selected[i] for i, ids in enumerate(player_sets) if player_id in ids
         ) <= appearance_limit)
@@ -365,7 +436,11 @@ def _optimize_single_game_lineup(slate: Slate, projection_matches: ProjectionMat
         if (
             settings.multiplier_positions is not None
             and players[i].primary_position not in settings.multiplier_positions
-        ) or multiplier_ceiling < settings.minimum_multiplier_ceiling:
+        ) or multiplier_ceiling < settings.minimum_multiplier_ceiling or (
+            settings.maximum_multiplier_bust_probability is not None
+            and (projection.bust_probability or 0)
+            > settings.maximum_multiplier_bust_probability
+        ):
             model.add(multiplier[i] == 0)
     for previous in previous_lineups:
         model.add(sum(multiplier[i] + flex[i] for i, player in enumerate(players) if player.platform_id in previous) <= rules.lineup_size - minimum_unique)

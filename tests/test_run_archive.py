@@ -68,6 +68,27 @@ class RunArchiveTests(unittest.TestCase):
             )
             self.assertEqual(destination.read_bytes(), b"archive")
 
+    def test_archives_hidden_ab_control_portfolio(self) -> None:
+        slate, matches = make_slate(Platform.DRAFTKINGS)
+        projections = tuple(matches.by_player_id.values())
+        lineups = generate_classic_lineups(slate, matches, 1)
+
+        content = build_run_archive(
+            slate, projections, lineups, {}, b"salary-header\n",
+            shadow_projections=projections,
+            shadow_lineups=lineups,
+            experiment={"name": "weekly-context-ab-v1"},
+        )
+
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            manifest = json.loads(archive.read("manifest.json"))
+            self.assertIn("shadow/lineups.csv", archive.namelist())
+            self.assertIn("shadow/projections.csv", archive.namelist())
+            self.assertIn("shadow/lineups.csv", manifest["artifacts"])
+            self.assertEqual(
+                manifest["experiment"]["name"], "weekly-context-ab-v1"
+            )
+
     def test_archives_hashed_projection_input_snapshots(self) -> None:
         slate, matches = make_slate(Platform.DRAFTKINGS)
         lineups = generate_classic_lineups(slate, matches, 1)

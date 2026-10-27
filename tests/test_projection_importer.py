@@ -69,6 +69,22 @@ class ProjectionImporterTests(unittest.TestCase):
         )
         self.assertEqual([item.projected_ownership for item in merged], [12.5, 18.2])
 
+    def test_accepts_common_provider_headers_and_percent_values(self) -> None:
+        slate = import_salary_csv(PROJECT_ROOT / "samples" / "DKSalaries.csv")
+        projections = import_projections_csv(PROJECT_ROOT / "examples" / "projections.csv")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "provider.csv"
+            path.write_text(
+                "Player,TeamAbbrev,Own%\n"
+                "Jaxon Smith-Njigba,SEA,17.4%\n"
+                "Derrick Henry,BAL,21.2%\n",
+                encoding="utf-8",
+            )
+            merged, matched = apply_ownership_csv(slate, projections, path)
+
+        self.assertEqual(matched, 2)
+        self.assertEqual([item.projected_ownership for item in merged], [17.4, 21.2])
+
 
 if __name__ == "__main__":
     unittest.main()

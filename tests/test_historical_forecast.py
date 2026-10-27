@@ -103,6 +103,52 @@ class HistoricalForecastTests(unittest.TestCase):
 
             self.assertEqual(offense, ())
 
+    def test_keeps_low_average_player_with_recent_role_growth(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            players = root / "players.csv"
+            teams = root / "teams.csv"
+            games = root / "games.csv"
+            players.write_text(
+                "season,week,season_type,player_display_name,position,carries,targets,receiving_yards\n"
+                "2026,1,REG,Growing Tight End,TE,0,0,0\n"
+                "2026,2,REG,Growing Tight End,TE,0,1,5\n"
+                "2026,3,REG,Growing Tight End,TE,0,1,6\n"
+                "2026,4,REG,Growing Tight End,TE,0,2,14\n"
+                "2026,5,REG,Growing Tight End,TE,0,5,35\n",
+                encoding="utf-8",
+            )
+            teams.write_text(
+                "season,week,season_type,game_id,team\n"
+                "2026,1,REG,g1,AAA\n"
+                "2026,2,REG,g2,AAA\n"
+                "2026,3,REG,g3,AAA\n"
+                "2026,4,REG,g4,AAA\n"
+                "2026,5,REG,g5,AAA\n",
+                encoding="utf-8",
+            )
+            games.write_text(
+                "game_id,home_team,away_team,home_score,away_score\n",
+                encoding="utf-8",
+            )
+            slate = Slate(
+                Platform.FANDUEL,
+                ContestFormat.SINGLE_GAME,
+                (Player(
+                    "te", "Growing Tight End", Position.TE, (Position.FLEX,),
+                    2_600, "AAA", "BBB", "AAA@BBB", platform_average=1.7,
+                    multiplier_salary=3_900,
+                ),),
+                "test.csv",
+            )
+
+            offense, _ = forecast_from_nflverse(
+                slate, (players,), (teams,), games, 2026, 6
+            )
+
+            self.assertEqual(len(offense), 1)
+            self.assertGreater(offense[0].stats.receiving_yards, 0)
+
     def test_role_trend_detects_reduced_role_and_ignores_absence_only_samples(self) -> None:
         declining = [
             {"carries": "7", "targets": "3"},

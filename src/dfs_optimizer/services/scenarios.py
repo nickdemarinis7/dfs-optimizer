@@ -15,6 +15,19 @@ class LineupScenarioAnalysis:
     p75: float
     p90: float
     top_rate: float
+    script_type: str
+    focal_team: str | None
+    multiplier_player: str | None
+    multiplier_position: str | None
+    rationale: str
+
+
+@dataclass(frozen=True, slots=True)
+class ScriptValidation:
+    lineup_number: int
+    predicted_script: str
+    verdict: str
+    evidence: str
 
 
 def simulate_lineups(
@@ -71,9 +84,13 @@ def simulate_lineups(
             team = team_factors[player.team]
             script = script_factors[player.team]
             if player.primary_position == Position.QB:
-                components = ((.25, game), (.15, team), (.50, pass_factors[player.team]), (.20, script), (.35, independent))
+                components = ((.25, game), (.15, team), (.60, pass_factors[player.team]), (.20, script), (.30, independent))
             elif player.primary_position in {Position.WR, Position.TE}:
-                components = ((.25, game), (.10, team), (.45, pass_factors[player.team]), (.15, script), (.30, receiver_share_factors[player_id]), (.40, independent))
+                # Passing volume can lift several teammates together. Target
+                # share still differentiates receivers, but it should not
+                # dominate the shared ceiling—as it did when a QB supported
+                # multiple tournament-winning pass catchers on the same slate.
+                components = ((.25, game), (.10, team), (.60, pass_factors[player.team]), (.15, script), (.18, receiver_share_factors[player_id]), (.35, independent))
             elif player.primary_position == Position.RB:
                 components = ((.25, game), (.20, team), (.50, rush_factors[player.team]), (-.20, script), (.45, independent))
             elif player.primary_position == Position.K:
@@ -103,7 +120,7 @@ def simulate_lineups(
     return tuple(
         LineupScenarioAnalysis(
             lineup_number=index + 1,
-            label=_scenario_label(lineup),
+            **_scenario_profile(lineup),
             mean=sum(values) / len(values),
             p75=_quantile(values, .75),
             p90=_quantile(values, .90),
@@ -111,6 +128,80 @@ def simulate_lineups(
         )
         for index, (lineup, values) in enumerate(zip(lineups, scores, strict=True))
     )
+
+
+def validate_lineup_scripts(
+    lineups,
+    analyses: tuple[LineupScenarioAnalysis, ...],
+    actuals,
+    team_scores: dict[str, int] | None = None,
+) -> tuple[ScriptValidation, ...]:
+    """Grade broad lineup theses against final fantasy outcomes.
+
+    This intentionally validates only claims supported by contest results.
+    A low-scoring football script needs a supplied final score; kicker or DST
+    fantasy results alone are not treated as proof that the game was low scoring.
+    """
+    actual_by_name = {
+        _normalize_name(item.name): item.fantasy_points for item in actuals
+    }
+    # Salary pools contain many inactive or unused players whose zeroes would
+    # make almost any multiplier look like a successful ceiling call. Compare
+    # against players who recorded a positive outcome, while a selected zero
+    # still grades below that benchmark and is therefore contradicted.
+    all_points = sorted(value for value in actual_by_name.values() if value > 0)
+    if not all_points:
+        return ()
+    median = _quantile(all_points, .50)
+    upper_quartile = _quantile(all_points, .75)
+    results = []
+    for lineup, analysis in zip(lineups, analyses, strict=True):
+        multiplier = lineup.entries[0]
+        multiplier_points = actual_by_name.get(
+            _normalize_name(multiplier.player.name)
+        )
+        script_type = analysis.script_type
+        verdict = "Inconclusive"
+        evidence = "Final player results do not directly prove this game script."
+        if script_type == "low_scoring_special_teams":
+            if team_scores and all(team in team_scores for team in lineup.entries[0].player.game.split("@")):
+                teams = lineup.entries[0].player.game.split("@")
+                total = sum(team_scores[team] for team in teams)
+                verdict = "Supported" if total <= 44 else "Contradicted" if total >= 52 else "Inconclusive"
+                evidence = f"The final game total was {total} points."
+            else:
+                specialists = [
+                    entry.player.name for entry in lineup.entries
+                    if entry.player.primary_position in {Position.K, Position.DST}
+                ]
+                specialist_points = [
+                    actual_by_name[_normalize_name(name)] for name in specialists
+                    if _normalize_name(name) in actual_by_name
+                ]
+                evidence = (
+                    f"Final score was not entered; selected K/DST averaged "
+                    f"{sum(specialist_points) / len(specialist_points):.1f} fantasy points."
+                    if specialist_points else "Final score was not entered."
+                )
+        elif multiplier_points is not None:
+            if script_type in {
+                "multiplier_ceiling", "team_rushing_control", "team_passing_eruption",
+                "quarterback_rushing_ceiling",
+            }:
+                verdict = (
+                    "Supported" if multiplier_points >= upper_quartile
+                    else "Contradicted" if multiplier_points < median
+                    else "Inconclusive"
+                )
+                evidence = (
+                    f"{multiplier.player.name} scored {multiplier_points:.1f}; "
+                    f"the slate median was {median:.1f} and upper quartile was "
+                    f"{upper_quartile:.1f}."
+                )
+        results.append(ScriptValidation(
+            analysis.lineup_number, analysis.label, verdict, evidence
+        ))
+    return tuple(results)
 
 
 def _outcome_at(projection, probability: float) -> float:
@@ -127,26 +218,49 @@ def _outcome_at(projection, probability: float) -> float:
     return points[-1][1]
 
 
-def _scenario_label(lineup) -> str:
+def _scenario_profile(lineup) -> dict:
     entries = lineup.entries
     multiplier = entries[0] if hasattr(entries[0], "point_multiplier") else None
     kickers_and_defenses = sum(
         entry.player.primary_position in {Position.K, Position.DST} for entry in entries
     )
     if kickers_and_defenses >= 2:
-        return "Low-scoring special-teams game"
+        return {
+            "label": "Low-scoring special-teams game",
+            "script_type": "low_scoring_special_teams",
+            "focal_team": None,
+            "multiplier_player": multiplier.player.name if multiplier else None,
+            "multiplier_position": multiplier.player.primary_position.value if multiplier else None,
+            "rationale": "The lineup uses at least two kickers or defenses and benefits from stalled drives or defensive scoring.",
+        }
     if multiplier is not None:
         player = multiplier.player
         if player.primary_position == Position.RB:
-            return f"{player.team} controls through {player.name}"
+            label, script_type = f"{player.team} controls through {player.name}", "team_rushing_control"
+            rationale = f"{player.name} occupies the multiplier slot in a rushing-led {player.team} construction."
         if player.primary_position == Position.QB:
             receivers = sum(
                 entry.player.team == player.team
                 and entry.player.primary_position in {Position.WR, Position.TE}
                 for entry in entries[1:]
             )
-            return f"{player.team} passing eruption" if receivers else f"{player.name} rushing ceiling"
-        return f"{player.name} Captain/MVP ceiling"
+            label = f"{player.team} passing eruption" if receivers else f"{player.name} rushing ceiling"
+            script_type = "team_passing_eruption" if receivers else "quarterback_rushing_ceiling"
+            rationale = (
+                f"{player.name} is multiplied with {receivers} same-team pass catcher(s)."
+                if receivers else f"{player.name} is multiplied without a same-team pass catcher."
+            )
+        if player.primary_position not in {Position.RB, Position.QB}:
+            label, script_type = f"{player.name} Captain/MVP ceiling", "multiplier_ceiling"
+            rationale = f"The lineup requires a ceiling outcome from multiplier {player.name}."
+        return {
+            "label": label,
+            "script_type": script_type,
+            "focal_team": player.team,
+            "multiplier_player": player.name,
+            "multiplier_position": player.primary_position.value,
+            "rationale": rationale,
+        }
     quarterback = next(
         (entry.player for entry in entries if entry.player.primary_position == Position.QB),
         None,
@@ -159,10 +273,17 @@ def _scenario_label(lineup) -> str:
         )
         bring_back = any(entry.player.team == quarterback.opponent for entry in entries)
         if receivers and bring_back:
-            return f"{quarterback.team}–{quarterback.opponent} passing shootout"
+            label = f"{quarterback.team}–{quarterback.opponent} passing shootout"
+            script_type = "passing_shootout"
+            rationale = "The lineup pairs a quarterback stack with an opposing bring-back."
+            return {"label": label, "script_type": script_type, "focal_team": quarterback.team, "multiplier_player": None, "multiplier_position": None, "rationale": rationale}
         if receivers:
-            return f"{quarterback.team} passing stack"
-    return "Balanced ceiling build"
+            return {"label": f"{quarterback.team} passing stack", "script_type": "team_passing_stack", "focal_team": quarterback.team, "multiplier_player": None, "multiplier_position": None, "rationale": "The lineup pairs a quarterback with same-team pass catchers."}
+    return {"label": "Balanced ceiling build", "script_type": "balanced", "focal_team": None, "multiplier_player": None, "multiplier_position": None, "rationale": "No single scoring path dominates the construction."}
+
+
+def _normalize_name(value: str) -> str:
+    return "".join(character for character in value.casefold() if character.isalnum())
 
 
 def _quantile(values, probability: float) -> float:

@@ -149,9 +149,12 @@ def save_submission_snapshot(
     return destination
 
 
-def load_submission_snapshot(path: str | Path) -> SubmissionSnapshot:
+def load_submission_snapshot(path: bytes | str | Path) -> SubmissionSnapshot:
     try:
-        payload = json.loads(Path(path).read_text())
+        payload = json.loads(
+            path.decode("utf-8-sig")
+            if isinstance(path, bytes) else Path(path).read_text()
+        )
         rosters = tuple(
             SubmittedRoster(
                 lineup_number=int(item["lineup_number"]),
@@ -168,7 +171,10 @@ def load_submission_snapshot(path: str | Path) -> SubmissionSnapshot:
             contest_format=ContestFormat(payload["contest_format"]),
             rosters=rosters,
         )
-    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (
+        KeyError, OSError, TypeError, ValueError, UnicodeDecodeError,
+        json.JSONDecodeError,
+    ) as exc:
         raise ValueError("submission snapshot could not be read") from exc
 
 

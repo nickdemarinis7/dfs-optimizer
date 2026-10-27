@@ -46,10 +46,12 @@ class SubmissionSnapshotTests(unittest.TestCase):
             self.assertEqual(destination, Path(folder) / "run-1.json")
             self.assertEqual(destination.read_bytes(), content)
             restored = load_submission_snapshot(destination)
+            restored_from_upload = load_submission_snapshot(content)
 
         self.assertEqual(restored.run_id, "run-1")
         self.assertEqual(restored.platform, slate.platform)
         self.assertEqual(restored.rosters, rosters)
+        self.assertEqual(restored_from_upload, restored)
 
     def test_rejects_invalid_submission_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
@@ -57,6 +59,9 @@ class SubmissionSnapshotTests(unittest.TestCase):
             path.write_text('{"run_id": "missing-rosters"}')
             with self.assertRaisesRegex(ValueError, "could not be read"):
                 load_submission_snapshot(path)
+
+        with self.assertRaisesRegex(ValueError, "could not be read"):
+            load_submission_snapshot(b"\xff\xfe\x00")
 
 
 if __name__ == "__main__":

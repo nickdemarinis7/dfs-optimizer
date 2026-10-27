@@ -20,9 +20,8 @@ from dfs_optimizer.app_ui import (
     summary_strip,
 )
 from dfs_optimizer.importers import match_projections
-from dfs_optimizer.models import ContestFormat, Position, Sport
+from dfs_optimizer.models import ContestFormat, Platform, Position, Sport
 from dfs_optimizer.optimization import (
-    DEFAULT_SHOWDOWN_MAX_KICKERS_AND_DEFENSES,
     ClassicOptimizationSettings,
     LineupOptimizationError,
     SingleGameOptimizationSettings,
@@ -31,6 +30,24 @@ from dfs_optimizer.optimization import (
     generate_single_game_3max_portfolio,
     generate_single_game_lineups,
 )
+try:
+    from dfs_optimizer.optimization.single_game import (
+        DEFAULT_SHOWDOWN_MAX_KICKERS_AND_DEFENSES,
+        DEFAULT_SHOWDOWN_MAX_PLAYERS_PER_TEAM,
+    )
+except ImportError:
+    # Streamlit can retain the earlier single-game module while hot-reloading
+    # this page after a deployment adds a new exported default.
+    from importlib import reload
+    from dfs_optimizer.optimization import single_game as _single_game
+
+    _single_game = reload(_single_game)
+    DEFAULT_SHOWDOWN_MAX_KICKERS_AND_DEFENSES = (
+        _single_game.DEFAULT_SHOWDOWN_MAX_KICKERS_AND_DEFENSES
+    )
+    DEFAULT_SHOWDOWN_MAX_PLAYERS_PER_TEAM = (
+        _single_game.DEFAULT_SHOWDOWN_MAX_PLAYERS_PER_TEAM
+    )
 from dfs_optimizer.services.projections import (
     apply_uploaded_ownership,
     apply_uploaded_projection_consensus,
@@ -41,11 +58,24 @@ from dfs_optimizer.services.ownership import (
     estimate_nfl_ownership,
 )
 from dfs_optimizer.services.opportunity import apply_opportunity_risk
-from dfs_optimizer.services.props import apply_nfl_prop_role_signals
+try:
+    from dfs_optimizer.services.props import apply_nfl_prop_projection_signals
+except ImportError:
+    # A running Streamlit process may still hold the module version from
+    # before projection-aware prop signals were added.
+    from importlib import reload
+    from dfs_optimizer.services import props as _props
+
+    _props = reload(_props)
+    apply_nfl_prop_projection_signals = _props.apply_nfl_prop_projection_signals
 from dfs_optimizer.data_sources.nfl_props import (
     NFL_TEAM_NAMES,
     PROP_MARKETS,
     fetch_nfl_prop_consensus,
+)
+from dfs_optimizer.data_sources.nfl_news import (
+    fetch_nfl_news_candidates,
+    nfl_news_snapshot,
 )
 from dfs_optimizer.services.role_adjustments import apply_current_role_adjustments
 from dfs_optimizer.services.player_context import (
@@ -59,17 +89,54 @@ from dfs_optimizer.services.player_context import (
     player_context_snapshot,
     summarize_prelock_context,
     verified_player_context_ids,
-    unverified_selected_player_ids,
 )
-from dfs_optimizer.services.risk import (
-    suggest_default_excluded_player_ids,
-    suggest_max_once_player_ids,
-    suggest_player_exposure_limits,
-    trusted_showdown_core_ids,
+try:
+    from dfs_optimizer.services.risk import (
+        suggest_default_excluded_player_ids,
+        suggest_max_once_player_ids,
+        suggest_player_exposure_limits,
+        trusted_showdown_core_ids,
+    )
+except ImportError:
+    # Streamlit can rerun a changed page while retaining an older imported
+    # service module. Reload once so newly added helpers are available without
+    # requiring the user to repair the session manually.
+    from importlib import reload
+    from dfs_optimizer.services import risk as _risk
+
+    _risk = reload(_risk)
+    suggest_default_excluded_player_ids = _risk.suggest_default_excluded_player_ids
+    suggest_max_once_player_ids = _risk.suggest_max_once_player_ids
+    suggest_player_exposure_limits = _risk.suggest_player_exposure_limits
+    trusted_showdown_core_ids = _risk.trusted_showdown_core_ids
+from dfs_optimizer.services.cfb_projections import (
+    CFB_FORECAST_MODEL_VERSION,
+    historically_verified_cfb_player_ids,
+    restore_verified_cfb_starters,
 )
-from dfs_optimizer.services.cfb_projections import restore_verified_cfb_starters
 from dfs_optimizer.services.confidence import apply_projection_confidence
-from dfs_optimizer.services.scenarios import simulate_lineups
+from dfs_optimizer.services.weekly_context import (
+    apply_coach_signals_to_player_context,
+    apply_live_weather,
+    append_weekly_snapshot_history,
+    build_weekly_context,
+    coach_signal_csv_template,
+    import_coach_signals,
+    load_practice_trajectories,
+    weekly_context_snapshot,
+)
+from dfs_optimizer.services.weekly_adjustments import apply_weekly_projection_context
+from dfs_optimizer.services import scenarios as _scenarios
+
+if "script_type" not in getattr(
+    _scenarios.LineupScenarioAnalysis, "__dataclass_fields__", {}
+):
+    # Discard the pre-game-script schema retained by a running Streamlit
+    # process before creating or serializing any scenario objects.
+    from importlib import reload
+
+    _scenarios = reload(_scenarios)
+simulate_lineups = _scenarios.simulate_lineups
 try:
     from dfs_optimizer.services.run_archive import build_run_archive, save_run_archive
 except ImportError:
@@ -81,6 +148,11 @@ except ImportError:
     _run_archive = reload(_run_archive)
     build_run_archive = _run_archive.build_run_archive
     save_run_archive = _run_archive.save_run_archive
+
+
+@st.cache_data(ttl=30 * 60, max_entries=8, show_spinner=False)
+def _current_nfl_news(slate):
+    return fetch_nfl_news_candidates(slate)
 
 
 slate = st.session_state.get("slate")
@@ -110,14 +182,25 @@ base_projections = restore_verified_cfb_starters(
     slate, canonical_base_projections, player_context
 )
 prop_matches = 0
+prop_adjustments = ()
 if slate.sport == Sport.NFL and st.session_state.get("nfl_prop_consensus"):
-    base_projections, prop_matches = apply_nfl_prop_role_signals(
+    base_projections, prop_matches, prop_adjustments = apply_nfl_prop_projection_signals(
         slate,
         base_projections,
         tuple(st.session_state["nfl_prop_consensus"]),
     )
 projections, role_adjustments = apply_current_role_adjustments(
     slate, base_projections, player_context
+)
+weekly_context = tuple(st.session_state.get("weekly_context", ()))
+health = st.session_state.get("historical_data_health", {})
+practice_trajectories = ()
+if health.get("season") and health.get("target_week"):
+    practice_trajectories = load_practice_trajectories(
+        f"data/cache/weekly_context/{health['season']}-week-{health['target_week']}.jsonl"
+    )
+projections, weekly_adjustments = apply_weekly_projection_context(
+    slate, projections, weekly_context, practice_trajectories
 )
 projections, opportunity_assessments = apply_opportunity_risk(
     slate, projections, player_context
@@ -130,6 +213,7 @@ projections = apply_projection_confidence(
 st.session_state["projections"] = projections
 st.session_state["role_adjustments"] = role_adjustments
 st.session_state["opportunity_assessments"] = opportunity_assessments
+st.session_state["weekly_projection_adjustments"] = weekly_adjustments
 projection_by_id = {item.platform_id: item for item in projections}
 role_adjustment_by_id = {item.platform_id: item for item in role_adjustments}
 opportunity_by_id = {item.platform_id: item for item in opportunity_assessments}
@@ -330,6 +414,156 @@ if slate.sport == Sport.NFL:
             f"{len(prelock.started_games)} game(s) appear to have started. Do not submit players from locked games.",
             icon=":material/lock_clock:",
         )
+    if weekly_context:
+        st.markdown("**Weekly game context**")
+        st.caption(
+            "Rest, travel, practice participation, weather, and opponent defensive "
+            "injuries are preserved with this run. These are decision aids; softer "
+            "signals do not silently override the projection model."
+        )
+        briefing_rows = []
+        for item in weekly_context:
+            practice = dict(item.practice_counts)
+            briefing_rows.append({
+                "Team": item.team,
+                "Opponent": item.opponent,
+                "Rest": item.rest_days if item.rest_days is not None else "—",
+                "Travel": f"{item.travel_miles:,} mi" if item.travel_miles else "Home",
+                "Weather": (
+                    "Indoor" if (item.roof or "").lower() in {"dome", "closed"}
+                    else " · ".join(filter(None, (
+                        f"{item.temperature_f:.0f}°" if item.temperature_f is not None else "",
+                        f"{item.wind_mph:.0f} mph wind" if item.wind_mph is not None else "",
+                        f"{item.precipitation_probability:.0f}% precip" if item.precipitation_probability is not None else "",
+                        item.weather_summary or "",
+                    ))) or "Pending"
+                ),
+                "Practice": " · ".join(
+                    f"{label} {practice.get(label, 0)}" for label in ("DNP", "LP", "FP")
+                    if practice.get(label)
+                ) or "No flags",
+                "Opponent D injuries": len(item.defensive_absences),
+                "Watch": " · ".join(item.notes) or "Normal",
+            })
+        st.dataframe(
+            pd.DataFrame(briefing_rows), hide_index=True, width="stretch",
+            column_config={
+                "Team": st.column_config.TextColumn(width="small"),
+                "Opponent": st.column_config.TextColumn(width="small"),
+                "Watch": st.column_config.TextColumn(width="large"),
+            },
+        )
+        if weekly_adjustments:
+            st.info(
+                f"Live weather made a bounded adjustment to {len(weekly_adjustments)} "
+                "player projection(s). Open the player table to review the updated "
+                "median, range, and confidence reason.",
+                icon=":material/air:",
+            )
+        if health.get("season") and health.get("target_week"):
+            if practice_trajectories:
+                st.markdown("**Practice movement**")
+                st.dataframe(
+                    pd.DataFrame([{
+                        "Player": item.name,
+                        "Team": item.team,
+                        "Week": list(item.observations),
+                        "Latest": item.latest,
+                        "Trend": "Improving" if item.improving else "Monitor",
+                    } for item in practice_trajectories]),
+                    hide_index=True,
+                    width="stretch",
+                    column_config={
+                        "Player": st.column_config.TextColumn(pinned=True),
+                        "Week": st.column_config.ListColumn("Practice week"),
+                    },
+                )
+        coach_actions = st.columns(2)
+        coach_actions[0].download_button(
+            "Download coach-report template",
+            coach_signal_csv_template(slate),
+            file_name="coach-role-signals.csv",
+            mime="text/csv",
+            icon=":material/download:",
+            width="stretch",
+        )
+        coach_upload = coach_actions[1].file_uploader(
+            "Upload coach reports",
+            type=("csv",),
+            key=f"coach-signals-{hash(slate)}",
+            label_visibility="collapsed",
+        )
+        if coach_upload is not None:
+            try:
+                coach_content = coach_upload.getvalue()
+                coach_hash = hashlib.sha256(coach_content).hexdigest()
+                coach_signals = import_coach_signals(coach_content)
+                st.session_state["coach_signals"] = coach_signals
+                coach_changed = st.session_state.get("coach_signals_hash") != coach_hash
+                if coach_changed:
+                    st.session_state["coach_signals_hash"] = coach_hash
+                    st.session_state["player_context"] = apply_coach_signals_to_player_context(
+                        slate,
+                        tuple(st.session_state.get("player_context", ())),
+                        coach_signals,
+                    )
+                health = st.session_state.get("historical_data_health", {})
+                season_value = health.get("season")
+                week_value = health.get("target_week")
+                if season_value and week_value:
+                    st.session_state["weekly_context_snapshot"] = weekly_context_snapshot(
+                        weekly_context,
+                        season=season_value,
+                        week=week_value,
+                        checked_at=st.session_state.get("weekly_context_checked_at"),
+                        coach_signals=coach_signals,
+                        slate=slate,
+                        player_context=tuple(st.session_state.get("player_context", ())),
+                    )
+                st.success(f"Loaded {len(coach_signals)} attributed coach signal(s).")
+                if coach_changed:
+                    st.rerun()
+            except (UnicodeDecodeError, ValueError) as exc:
+                st.error(str(exc))
+        if coach_signals := st.session_state.get("coach_signals"):
+            st.caption(
+                "Coach signals · " + ", ".join(
+                    f"{item.player}: {item.signal}" for item in coach_signals[:6]
+                )
+            )
+        if st.button(
+            "Scan recent team news",
+            icon=":material/newspaper:",
+            width="stretch",
+            key="scan-nfl-news",
+        ):
+            with st.spinner("Checking attributed team and player reports…"):
+                news_candidates = _current_nfl_news(slate)
+            st.session_state["nfl_news_candidates"] = news_candidates
+            st.session_state["nfl_news_checked_at"] = datetime.now(timezone.utc)
+            st.session_state["nfl_news_snapshot"] = nfl_news_snapshot(news_candidates)
+        if news_candidates := st.session_state.get("nfl_news_candidates"):
+            st.caption(
+                "Recent reports matched to slate players. Open the source before "
+                "recording a coach-role signal; headlines do not alter projections."
+            )
+            st.dataframe(
+                pd.DataFrame([{
+                    "Player": ", ".join(item.matched_players),
+                    "Team": item.team,
+                    "Topics": list(item.topics),
+                    "Report": item.title,
+                    "Source": item.source,
+                    "Open": item.url,
+                } for item in news_candidates[:30]]),
+                hide_index=True,
+                width="stretch",
+                column_config={
+                    "Player": st.column_config.TextColumn(pinned=True),
+                    "Topics": st.column_config.MultiselectColumn(color="auto"),
+                    "Open": st.column_config.LinkColumn("Open", display_text="Read"),
+                },
+            )
     if st.button(
         "Refresh injuries & depth chart",
         icon=":material/refresh:",
@@ -344,6 +578,32 @@ if slate.sport == Sport.NFL:
             if st.session_state.get("final_status_context"):
                 source += " + uploaded final active/inactive report"
             store_player_context(refreshed, source)
+            health = st.session_state.get("historical_data_health", {})
+            season_value = health.get("season")
+            week_value = health.get("target_week")
+            if season_value and week_value:
+                checked_at = datetime.now(timezone.utc)
+                weekly_context = apply_live_weather(
+                    build_weekly_context(
+                        slate, season_value, week_value, "data/cache"
+                    )
+                )
+                weekly_snapshot = weekly_context_snapshot(
+                    weekly_context,
+                    season=season_value,
+                    week=week_value,
+                    checked_at=checked_at,
+                    coach_signals=tuple(st.session_state.get("coach_signals", ())),
+                    slate=slate,
+                    player_context=refreshed,
+                )
+                st.session_state["weekly_context"] = weekly_context
+                st.session_state["weekly_context_checked_at"] = checked_at
+                st.session_state["weekly_context_snapshot"] = weekly_snapshot
+                append_weekly_snapshot_history(
+                    f"data/cache/weekly_context/{season_value}-week-{week_value}.jsonl",
+                    weekly_snapshot,
+                )
             st.session_state.pop(f"build-exclusions-{hash(slate)}", None)
             st.session_state.pop(f"build-max-once-{hash(slate)}", None)
             st.toast("Injuries and depth chart are current.", icon=":material/check_circle:")
@@ -558,7 +818,8 @@ else:
     current_projection_key = st.session_state.get("projection_key") or ()
     cfb_model = (
         "recent-form forecast"
-        if current_projection_key and current_projection_key[0] == "cfb-recent-usage-v8"
+        if current_projection_key
+        and current_projection_key[0] == CFB_FORECAST_MODEL_VERSION
         else "platform-average baseline"
     )
     with st.container(border=True):
@@ -704,7 +965,7 @@ if slate.contest_format == ContestFormat.CLASSIC:
     require_bring_back = False
 else:
     maximum_multiplier_exposure = .34
-    maximum_players_per_team = 4
+    maximum_players_per_team = DEFAULT_SHOWDOWN_MAX_PLAYERS_PER_TEAM
     maximum_kickers_and_defenses = DEFAULT_SHOWDOWN_MAX_KICKERS_AND_DEFENSES
 
 customize_strategy = st.toggle(
@@ -768,9 +1029,14 @@ if customize_strategy:
                 key="build-multiplier-exposure",
             )) / 100
             maximum_players_per_team = int(st.number_input(
-                "Maximum players from one team", 3, 5, 4,
+                "Maximum players from one team", 3, 5,
+                DEFAULT_SHOWDOWN_MAX_PLAYERS_PER_TEAM,
                 key="build-maximum-team-players",
-                help="Four is balanced. Five permits aggressive 5–1 game scripts.",
+                help=(
+                    "Five permits 5–1 constructions that repeatedly appear near the "
+                    "top of large-field Showdown contests. Choose four only when you "
+                    "specifically want more balanced team exposure."
+                ),
             ))
             maximum_kickers_and_defenses = int(st.number_input(
                 "Maximum kickers and defenses", 0, 3,
@@ -858,7 +1124,15 @@ if customize_strategy:
                     # restored internal baseline on the next render.
                     st.session_state.pop("ownership_hash", None)
                     st.rerun()
-        ownership = st.file_uploader("Projected ownership CSV (optional)", type="csv")
+        ownership = st.file_uploader(
+            "Projected ownership CSV (optional)",
+            type="csv",
+            help=(
+                "The free in-house estimate is used automatically. If you have a CSV, "
+                "common columns such as Player, Team, Own%, pOWN%, and Projected "
+                "Ownership are accepted; unmatched players keep an internal estimate."
+            ),
+        )
         if ownership:
             content = ownership.getvalue()
             ownership_hash = hashlib.sha256(content).hexdigest()
@@ -1093,7 +1367,10 @@ with st.container(border=True):
 locked_ids, excluded_ids = frozenset(locked), frozenset(excluded)
 limited_ids = frozenset(max_once) - locked_ids - excluded_ids
 if slate.sport == Sport.CFB:
-    current_verified_context_ids = verified_player_context_ids(player_context)
+    current_verified_context_ids = (
+        verified_player_context_ids(player_context)
+        | historically_verified_cfb_player_ids(tuple(projections))
+    )
     pending_unverified_ids = tuple(
         player_id
         for player_id in st.session_state.get(cfb_pending_key, ())
@@ -1105,13 +1382,62 @@ if slate.sport == Sport.CFB:
         with st.container(border=True):
             section_intro(
                 "Verify selected college players",
-                "These players were selected in the provisional portfolio but have no meaningful current availability or depth-chart row.",
+                "These selected players lack both a meaningful current availability row and enough recent game participation to verify automatically.",
                 icon=":material/fact_check:",
             )
             st.warning(
                 "Confirm every player individually or exclude them. Generation remains blocked until all selected players are resolved.",
                 icon=":material/gpp_maybe:",
             )
+            st.download_button(
+                "Download uncertain-player depth-chart template",
+                player_context_csv_template(
+                    slate, frozenset(pending_unverified_ids)
+                ),
+                "cfb-uncertain-player-context.csv",
+                "text/csv",
+                icon=":material/download:",
+                width="stretch",
+                help=(
+                    "Complete this from an official team or conference source. "
+                    "It contains only players selected by the provisional portfolio."
+                ),
+            )
+            focused_context_file = st.file_uploader(
+                "Upload completed uncertain-player checks",
+                type="csv",
+                key=f"cfb-focused-context-{hash(slate)}",
+                help=(
+                    "Depth order and active status are merged into the existing "
+                    "slate context without removing earlier checks."
+                ),
+            )
+            if focused_context_file is not None:
+                focused_content = focused_context_file.getvalue()
+                focused_hash = hashlib.sha256(focused_content).hexdigest()
+                if st.session_state.get("cfb_focused_context_hash") != focused_hash:
+                    try:
+                        imported_context = import_player_context_csv(
+                            slate, focused_content
+                        )
+                        merged_context = {
+                            item.platform_id: item for item in player_context
+                        }
+                        merged_context.update({
+                            item.platform_id: item for item in imported_context
+                        })
+                        store_player_context(
+                            tuple(merged_context.values()),
+                            "Official team/conference CFB checks",
+                        )
+                        st.session_state["cfb_focused_context_hash"] = focused_hash
+                        st.toast(
+                            f"Matched current context for {len(imported_context)} uncertain players.",
+                            icon=":material/check_circle:",
+                        )
+                        st.rerun()
+                    except (UnicodeError, ValueError) as exc:
+                        st.error(str(exc), icon=":material/error:")
             cfb_acknowledged_ids = frozenset(st.multiselect(
                 "Players personally checked against a current team or conference source",
                 pending_unverified_ids,
@@ -1153,8 +1479,9 @@ if ownership_coverage >= .75:
 summary_strip("Strategy ready", " · ".join(strategy_parts))
 if ownership_source == "slate-relative estimate":
     st.caption(
-        "Ownership leverage uses a conservative slate-relative estimate—not "
-        "reported contest ownership. Upload a trusted ownership CSV to replace it."
+        "Ownership leverage uses the free in-house slate model—not reported contest "
+        "ownership. Its archived estimates are compared with final contest ownership "
+        "so we can continue calibrating it."
     )
 
 action_guide(
@@ -1196,6 +1523,7 @@ if generate_clicked:
             )
         generation_warning = None
         quality_scenario_analysis = ()
+        classic_candidate_diagnostics = {}
         live_context = player_context
         live_age = context_age_minutes()
         if slate.sport == Sport.NFL and (live_age is None or live_age > 15):
@@ -1226,9 +1554,17 @@ if generate_clicked:
             slate, projections, tuple(live_context),
             context_age_minutes=context_age_minutes(),
         )
+        control_projections = projections
+        projections, weekly_adjustments = apply_weekly_projection_context(
+            slate,
+            projections,
+            tuple(st.session_state.get("weekly_context", ())),
+            practice_trajectories,
+        )
         st.session_state["projections"] = projections
         st.session_state["role_adjustments"] = role_adjustments
         st.session_state["opportunity_assessments"] = opportunity_assessments
+        st.session_state["weekly_projection_adjustments"] = weekly_adjustments
         live_excluded = suggest_default_excluded_player_ids(
             slate, tuple(projections), live_context
         ) & players.keys()
@@ -1259,6 +1595,7 @@ if generate_clicked:
         ))
         effective_player_exposure = maximum_player_exposure
         effective_minimum_unique = minimum_unique
+        protected_exposure_limits = effective_exposure_limits
         effective_ownership_penalty = (
             .05 if ownership_source == "uploaded" and ownership_coverage >= .75
             else .025 if slate.sport == Sport.CFB and ownership_coverage >= .75
@@ -1287,6 +1624,23 @@ if generate_clicked:
                     minimum_bring_back_ceiling=12 if require_qb_stack and require_bring_back else 0,
                     unique_primary_stacks=require_qb_stack,
                     ownership_penalty=effective_ownership_penalty,
+                    second_tight_end_minimum_projection=(
+                        9 if slate.sport == Sport.NFL else 0
+                    ),
+                    second_tight_end_minimum_floor=(
+                        4 if slate.sport == Sport.NFL else 0
+                    ),
+                    second_tight_end_maximum_bust_probability=(
+                        .40 if slate.sport == Sport.NFL else 1
+                    ),
+                    require_bring_back_for_four_player_team=(
+                        slate.sport == Sport.NFL
+                    ),
+                    avoid_opposing_running_backs=(slate.sport == Sport.NFL),
+                    minimum_quarterbacks=(
+                        2 if slate.sport == Sport.CFB
+                        and slate.platform == Platform.DRAFTKINGS else 0
+                    ),
                 )
                 use_tuned_3max = (
                     slate.sport != Sport.CFB
@@ -1296,7 +1650,10 @@ if generate_clicked:
                     and require_qb_stack
                 )
                 lineups = (
-                    generate_classic_3max_portfolio(slate, matches, settings)
+                    generate_classic_3max_portfolio(
+                        slate, matches, settings,
+                        candidate_diagnostics=classic_candidate_diagnostics,
+                    )
                     if use_tuned_3max else
                     generate_classic_lineups(
                         slate, matches, lineup_count, minimum_unique_players=minimum_unique,
@@ -1305,11 +1662,14 @@ if generate_clicked:
                         maximum_dst_exposure=maximum_dst_exposure,
                         lineup_ceiling_weights=(
                             (
-                                (.15, .40, .70)
+                                (.15, .45, .85)
                                 if slate.sport == Sport.CFB and lineup_count == 3
                                 else (*([.3] * (lineup_count - 1)), .7)
                             )
                             if include_ceiling_lineup else None
+                        ),
+                        minimum_projection_ratio=(
+                            .75 if slate.sport == Sport.CFB and lineup_count == 3 else 0
                         ),
                     )
                 )
@@ -1324,7 +1684,9 @@ if generate_clicked:
                     multiplier_positions=frozenset({Position.QB, Position.RB, Position.WR, Position.TE}),
                     # Avoid a brittle cutoff like Week 5's Bucky Irving projection:
                     # 19.88 multiplied ceiling, yet a winning Captain outcome.
-                    minimum_multiplier_ceiling=18, minimum_quarterbacks=1,
+                    minimum_multiplier_ceiling=18,
+                    maximum_multiplier_bust_probability=.45,
+                    minimum_quarterbacks=1,
                     minimum_quarterback_projection=5, minimum_player_projection=.1,
                     maximum_players_per_team=maximum_players_per_team,
                     maximum_kickers_and_defenses=maximum_kickers_and_defenses,
@@ -1340,35 +1702,45 @@ if generate_clicked:
                     lineup_count == 3 and minimum_unique == 2
                     and maximum_player_exposure == .67
                     and maximum_multiplier_exposure == .34 and include_ceiling_lineup
-                    and maximum_players_per_team == 4
+                    and maximum_players_per_team
+                    == DEFAULT_SHOWDOWN_MAX_PLAYERS_PER_TEAM
                     and maximum_kickers_and_defenses
                     == DEFAULT_SHOWDOWN_MAX_KICKERS_AND_DEFENSES
                 )
                 if use_tuned_3max:
+                    trusted_core_ids = trusted_showdown_core_ids(
+                        slate,
+                        tuple(projections),
+                        tuple(live_context),
+                        opportunity_assessments,
+                    )
                     try:
                         lineups = generate_single_game_3max_portfolio(
-                            slate, matches, settings
+                            slate,
+                            matches,
+                            settings,
+                            universal_core_player_ids=trusted_core_ids,
                         )
                     except LineupOptimizationError:
-                        # Two-player uniqueness can conflict with the 3-max
-                        # upside floor on small or top-heavy Showdown slates.
-                        # Retry the joint selector with one-player uniqueness
-                        # before falling back to sequential construction. This
-                        # keeps the upside floor, 2-of-3 player cap, and three
-                        # distinct Captain/MVP choices intact.
+                        # FanDuel's six-slot format needs 18 appearances across
+                        # three lineups. A universal 2-of-3 cap can leave the
+                        # strongest joint portfolio infeasible even when a few
+                        # verified starters are safe universal cores. Relax
+                        # only those players before sacrificing uniqueness or
+                        # falling back to order-dependent sequential builds.
                         try:
                             lineups = generate_single_game_3max_portfolio(
                                 slate,
                                 matches,
                                 settings,
                                 minimum_unique_players=1,
+                                universal_core_player_ids=trusted_core_ids,
                             )
                             effective_minimum_unique = 1
                             generation_warning = add_generation_warning(generation_warning, (
-                                "Two-player uniqueness conflicted with the portfolio upside floor, "
-                                "so the joint selector used one-player uniqueness. The player "
-                                "exposure cap, three distinct Captain/MVP choices, and upside floor "
-                                "are still enforced."
+                                "The joint selector used one-player uniqueness and allowed only "
+                                "the strongest verified core players in all three lineups. Other "
+                                "players remain capped at two appearances."
                             ))
                         except LineupOptimizationError:
                             lineups = generate_single_game_lineups(
@@ -1380,7 +1752,7 @@ if generate_clicked:
                                 lineup_ceiling_weights=(.3, .3, .7),
                             )
                             generation_warning = add_generation_warning(generation_warning, (
-                                "The joint Showdown selectors could not form a portfolio. These "
+                                "The joint Showdown selector could not form a portfolio. These "
                                 "lineups preserve your exposure, uniqueness, player-pool, and "
                                 "Captain/MVP limits, but were generated sequentially instead."
                             ))
@@ -1524,16 +1896,17 @@ if generate_clicked:
                     for lineup in lineups
                     for entry in lineup.entries
                 }
-                verified_context_ids = verified_player_context_ids(
-                    tuple(live_context)
+                verified_context_ids = (
+                    verified_player_context_ids(tuple(live_context))
+                    | historically_verified_cfb_player_ids(tuple(projections))
                 )
                 unresolved_selected_ids = (
                     selected_player_ids - verified_context_ids
                 )
-                unacknowledged_ids = unverified_selected_player_ids(
-                    selected_player_ids,
-                    tuple(live_context),
-                    cfb_acknowledged_ids,
+                unacknowledged_ids = (
+                    selected_player_ids
+                    - verified_context_ids
+                    - cfb_acknowledged_ids
                 )
                 st.session_state[cfb_pending_key] = tuple(sorted(
                     unresolved_selected_ids
@@ -1544,10 +1917,77 @@ if generate_clicked:
                         for player_id in unacknowledged_ids
                     ))
                     raise RuntimeError(
-                        "Final CFB verification is required for the selected portfolio: "
+                        "Current verification is required only for these uncertain CFB players: "
                         + names
-                        + ". Confirm each player in the verification panel or exclude them, then generate again."
+                        + ". Confirm them in the verification panel or exclude them, then generate again. Established players with recent usage are cleared automatically."
                     )
+            shadow_lineups = ()
+            if slate.sport == Sport.NFL and weekly_adjustments:
+                status.write("Generating no-context shadow portfolio")
+                control_matches = match_projections(slate, control_projections)
+                try:
+                    if slate.contest_format == ContestFormat.CLASSIC:
+                        shadow_lineups = (
+                            generate_classic_3max_portfolio(
+                                slate, control_matches, settings
+                            )
+                            if use_tuned_3max else
+                            generate_classic_lineups(
+                                slate,
+                                control_matches,
+                                lineup_count,
+                                minimum_unique_players=effective_minimum_unique,
+                                settings=settings,
+                                maximum_player_exposure=effective_player_exposure,
+                                maximum_qb_exposure=maximum_qb_exposure,
+                                maximum_dst_exposure=maximum_dst_exposure,
+                                lineup_ceiling_weights=(
+                                    (*([.3] * (lineup_count - 1)), .7)
+                                    if include_ceiling_lineup else None
+                                ),
+                            )
+                        )
+                    else:
+                        shadow_settings = replace(
+                            settings,
+                            limited_player_ids=effective_limited_ids,
+                            player_exposure_limits=protected_exposure_limits,
+                        )
+                        if use_tuned_3max:
+                            control_cores = trusted_showdown_core_ids(
+                                slate,
+                                control_projections,
+                                tuple(live_context),
+                                opportunity_assessments,
+                            )
+                            try:
+                                shadow_lineups = generate_single_game_3max_portfolio(
+                                    slate,
+                                    control_matches,
+                                    shadow_settings,
+                                    minimum_unique_players=effective_minimum_unique,
+                                    universal_core_player_ids=control_cores,
+                                )
+                            except LineupOptimizationError:
+                                shadow_lineups = ()
+                        if not shadow_lineups:
+                            shadow_lineups = generate_single_game_lineups(
+                                slate,
+                                control_matches,
+                                lineup_count,
+                                minimum_unique_players=effective_minimum_unique,
+                                maximum_player_exposure=effective_player_exposure,
+                                maximum_multiplier_exposure=maximum_multiplier_exposure,
+                                settings=shadow_settings,
+                                lineup_ceiling_weights=(
+                                    (*([.3] * (lineup_count - 1)), .7)
+                                    if include_ceiling_lineup else None
+                                ),
+                            )
+                    if len(shadow_lineups) != lineup_count:
+                        shadow_lineups = ()
+                except (LineupOptimizationError, ValueError):
+                    shadow_lineups = ()
             status.update(label="Portfolio ready", state="complete", expanded=False)
         lineup_settings = {
             "strategy_version": "tournament-defaults-v5",
@@ -1559,12 +1999,23 @@ if generate_clicked:
             "minimum_unique_players": effective_minimum_unique,
             "requested_minimum_unique_players": minimum_unique,
             "maximum_player_exposure": effective_player_exposure,
+            "classic_candidate_diagnostics": classic_candidate_diagnostics or None,
+            "nfl_prop_adjustments": tuple({
+                "player": item.player,
+                "implied_points": round(item.implied_points, 3),
+                "original_projection": round(item.original_projection, 3),
+                "adjusted_projection": round(item.adjusted_projection, 3),
+                "markets": item.markets,
+            } for item in prop_adjustments),
             "locked_players": tuple(sorted(players[player_id].name for player_id in locked_ids)),
             "excluded_players": tuple(sorted(
                 players[player_id].name for player_id in effective_excluded_ids
             )),
             "automatic_exclusion_suggestions": tuple(sorted(
-                players[player_id].name for player_id in suggested_excluded
+                players[player_id].name
+                for player_id in (
+                    (suggested_excluded | live_excluded) & effective_excluded_ids
+                )
             )),
             "cfb_game_lines_source": (
                 st.session_state.get("cfb_lines_name")
@@ -1573,6 +2024,22 @@ if generate_clicked:
             "cfb_target_week": (
                 st.session_state.get("cfb_target_week")
                 if slate.sport == Sport.CFB else None
+            ),
+            "nfl_target_season": (
+                st.session_state.get("historical_data_health", {}).get("season")
+                if slate.sport == Sport.NFL else None
+            ),
+            "nfl_target_week": (
+                st.session_state.get("historical_data_health", {}).get("target_week")
+                if slate.sport == Sport.NFL else None
+            ),
+            "nfl_stats_through_week": (
+                st.session_state.get("historical_data_health", {}).get("stats_week")
+                if slate.sport == Sport.NFL else None
+            ),
+            "nfl_snaps_through_week": (
+                st.session_state.get("historical_data_health", {}).get("snap_week")
+                if slate.sport == Sport.NFL else None
             ),
             "cfb_game_lines_team_coverage": (
                 len(cfb_game_environments) / max(1, len(slate.teams))
@@ -1692,10 +2159,30 @@ if generate_clicked:
             lineup_settings.update({
                 "maximum_qb_exposure": maximum_qb_exposure,
                 "maximum_dst_exposure": maximum_dst_exposure,
+                "minimum_quarterbacks": (
+                    2 if slate.sport == Sport.CFB
+                    and slate.platform == Platform.DRAFTKINGS else 0
+                ),
+                "minimum_projection_ratio": (
+                    .75 if slate.sport == Sport.CFB and lineup_count == 3 else 0
+                ),
                 "require_qb_stack": require_qb_stack,
                 "require_opponent_bring_back": require_bring_back,
                 "minimum_stack_projection": 7 if require_qb_stack else 0,
                 "minimum_bring_back_projection": 7 if require_qb_stack and require_bring_back else 0,
+                "second_tight_end_minimum_projection": (
+                    9 if slate.sport == Sport.NFL else 0
+                ),
+                "second_tight_end_minimum_floor": (
+                    4 if slate.sport == Sport.NFL else 0
+                ),
+                "second_tight_end_maximum_bust_probability": (
+                    .40 if slate.sport == Sport.NFL else 1
+                ),
+                "require_bring_back_for_four_player_team": (
+                    slate.sport == Sport.NFL
+                ),
+                "avoid_opposing_running_backs": slate.sport == Sport.NFL,
             })
         else:
             lineup_settings.update({
@@ -1717,8 +2204,22 @@ if generate_clicked:
                 "p75": item.p75,
                 "p90": item.p90,
                 "top_rate": item.top_rate,
+                "script_type": item.script_type,
+                "focal_team": item.focal_team,
+                "multiplier_player": item.multiplier_player,
+                "multiplier_position": item.multiplier_position,
+                "rationale": item.rationale,
             }
             for item in scenario_analysis
+        ]
+        lineup_settings["weekly_projection_adjustments"] = [
+            {
+                "platform_id": item.platform_id,
+                "player": item.player,
+                "factor": item.factor,
+                "reasons": list(item.reasons),
+            }
+            for item in weekly_adjustments
         ]
         if slate.contest_format == ContestFormat.SINGLE_GAME:
             lineup_settings["minimum_portfolio_p90_ratio"] = .80
@@ -1757,6 +2258,10 @@ if generate_clicked:
             )
         if final_status_snapshot := st.session_state.get("final_status_content"):
             input_snapshots["final-status.csv"] = final_status_snapshot
+        if weekly_snapshot := st.session_state.get("weekly_context_snapshot"):
+            input_snapshots["weekly-context.json"] = weekly_snapshot
+        if news_snapshot := st.session_state.get("nfl_news_snapshot"):
+            input_snapshots["nfl-news-candidates.json"] = news_snapshot
         run_archive = build_run_archive(
             slate,
             projections,
@@ -1768,6 +2273,18 @@ if generate_clicked:
             created_at=created_at,
             projection_built_at=st.session_state.get("projection_built_at"),
             input_snapshots=input_snapshots,
+            shadow_projections=(control_projections if shadow_lineups else None),
+            shadow_lineups=shadow_lineups,
+            experiment=(
+                {
+                    "name": "weekly-context-ab-v1",
+                    "treatment": "weekly context enabled",
+                    "control": "weekly projection adjustments disabled",
+                    "primary_portfolio": "treatment",
+                    "shadow_lineup_count": len(shadow_lineups),
+                }
+                if shadow_lineups else None
+            ),
         )
         archive_name = (
             f"dfs-run-{slate.platform.value}-{slate.contest_format.value}.zip"
@@ -1792,6 +2309,10 @@ if generate_clicked:
         st.session_state["current_run_id"] = run_id
         st.session_state["generation_warning"] = generation_warning
         st.session_state["scenario_analysis"] = scenario_analysis
+        st.session_state["shadow_lineups"] = shadow_lineups
+        st.session_state["shadow_projections"] = (
+            control_projections if shadow_lineups else ()
+        )
         st.switch_page("app_pages/results.py")
     except (ValueError, RuntimeError) as exc:
         st.error(f"Could not generate lineups: {exc}")

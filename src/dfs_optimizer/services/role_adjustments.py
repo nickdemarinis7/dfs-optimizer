@@ -50,11 +50,10 @@ def apply_current_role_adjustments(
     committee players are deliberately excluded from this safeguard.
 
     When a higher-usage RB, WR, or TE is unavailable, the first healthy reserve
-    is instead given a modest 10% promotion above the stronger of his current
-    forecast and platform average. A player's old per-game history is a poor
-    median after a material promotion; this bounded uplift recognizes the new
-    opportunity without assigning all of the missing starter's production to
-    one replacement.
+    is instead given a modest promotion. The result is capped at 35% above the
+    current forecast unless an explicit pre-lock role report says the workload
+    expanded. A player's old per-game history is a poor median after a material
+    promotion, but nominal depth order alone cannot justify nearly doubling it.
     """
     if slate.sport != Sport.NFL or not contexts:
         return projections, ()
@@ -150,7 +149,7 @@ def apply_current_role_adjustments(
                 and player.platform_id in projection_by_id
                 and any(
                     (unavailable_player.platform_average or 0)
-                    > (player.platform_average or 0)
+                    >= minimum_platform_average[position]
                     for unavailable_player in unavailable_players
                 )
             ):
@@ -192,7 +191,22 @@ def apply_current_role_adjustments(
             or player.primary_position == Position.WR and depth >= 4
         )
         stability = projection.opportunity_stability
-        if deep_skill_role and stability is not None and stability < .60:
+        # RB3+ is a reserve role when a healthy RB1 is present. Historical
+        # spot-start production must not preserve a starter-level median after
+        # the lead back returns; unlike WR/TE depth labels, this is not merely
+        # a formation distinction. An explicit current role report can still
+        # override this above.
+        reserve_running_back = (
+            player.primary_position == Position.RB and depth >= 3
+        )
+        if reserve_running_back:
+            factor = .60
+            factors[player.platform_id] = (
+                factor,
+                f"RB{depth} behind an active RB1; reserve-role projection applied",
+                depth,
+            )
+        elif deep_skill_role and stability is not None and stability < .60:
             factor = .75 if stability < .35 else .85
             factors[player.platform_id] = (
                 factor,
@@ -252,18 +266,33 @@ def apply_current_role_adjustments(
                 projection.projected_points,
                 player.platform_average or 0,
             )
-            target = promoted_baseline * 1.10
+            target = min(
+                promoted_baseline * 1.10,
+                projection.projected_points * 1.35,
+            )
             factor = target / projection.projected_points
             scale = lambda value: value * factor if value is not None else None
+            # Historical ranges describe the player's old role. A newly
+            # promoted starter needs a wider upper range as well as a higher
+            # median; otherwise a productive reserve can remain ineligible for
+            # Captain/MVP even after inheriting starter-level opportunity.
+            promoted_ceiling = max(
+                scale(projection.ceiling) or target,
+                target * 1.80,
+            )
+            promoted_p75 = max(
+                scale(projection.p75) or target,
+                target * 1.30,
+            )
             updated = replace(
                 projection,
                 projected_points=target,
                 floor=scale(projection.floor),
-                ceiling=scale(projection.ceiling),
+                ceiling=promoted_ceiling,
                 p10=scale(projection.p10),
                 p25=scale(projection.p25),
-                p75=scale(projection.p75),
-                p90=scale(projection.p90),
+                p75=min(promoted_p75, promoted_ceiling),
+                p90=promoted_ceiling,
             )
             adjusted.append(updated)
             audit.append(RoleAdjustment(

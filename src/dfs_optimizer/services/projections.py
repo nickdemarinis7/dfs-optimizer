@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import csv
+import io
 from dataclasses import replace
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 import tempfile
+import zipfile
 
 from dfs_optimizer.data_sources.nflverse import download_nflverse_season
 from dfs_optimizer.importers import (
@@ -104,6 +106,34 @@ def historical_data_paths(
         tuple(root / f"snap_counts_{season}.csv" for season in seasons),
         root / "games.csv",
     )
+
+
+def nfl_historical_input_snapshot(
+    target_season: int,
+    cache_dir: str | Path = "data/cache",
+) -> bytes:
+    """Package the exact local NFL model inputs used by a forecast.
+
+    The source CSVs are already season-scoped (except the games schedule), and
+    ZIP compression keeps the archived run reasonably small. Keeping the raw
+    files—not only their hashes—lets a future model version rebuild the slate
+    without silently substituting newer nflverse data.
+    """
+    paths = historical_data_paths(target_season, cache_dir)
+    if paths.missing:
+        missing = ", ".join(str(path) for path in paths.missing)
+        raise FileNotFoundError(f"missing historical data files: {missing}")
+    output = io.BytesIO()
+    source_paths = (
+        *paths.player_files,
+        *paths.team_files,
+        *paths.snap_files,
+        paths.games_file,
+    )
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in source_paths:
+            archive.writestr(path.name, path.read_bytes())
+    return output.getvalue()
 
 
 def download_historical_data(

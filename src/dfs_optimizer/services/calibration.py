@@ -5,6 +5,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+def calibration_excluded_player_names(
+    settings: dict, injury_censored_players: tuple[str, ...] = ()
+) -> frozenset[str]:
+    """Players whose result should not teach the projection model.
+
+    An automatic pre-lock exclusion is a player-pool decision rather than a
+    playable projection. Keep it in a separate screening audit, just as an
+    unforeseeable in-game injury remains in lineup scoring but not calibration.
+    """
+    return frozenset({
+        *(name for name in injury_censored_players if name),
+        *(
+            name for name in settings.get("automatic_exclusion_suggestions", ())
+            if name
+        ),
+    })
+
+
 def projection_confidence_tier(row) -> str:
     """Classify the forecast using only signals preserved in an archived run."""
     if row.confidence_tier:
@@ -151,6 +169,52 @@ def aggregate_winner_strategy_bands(records: tuple[dict, ...]) -> dict:
     }
 
 
+def aggregate_weekly_adjustment_performance(records: tuple[dict, ...]) -> dict:
+    """Measure whether archived weekly adjustments reduced projection error."""
+    totals = {}
+    for record in records:
+        players = {
+            "".join(character for character in item.get("player", "").casefold() if character.isalnum()): item
+            for item in record.get("player_calibration", ())
+        }
+        for adjustment in record.get("weekly_projection_adjustments", ()):
+            factor = adjustment.get("factor")
+            player = players.get("".join(
+                character for character in adjustment.get("player", "").casefold()
+                if character.isalnum()
+            ))
+            if not player or not factor or factor <= 0:
+                continue
+            after = player.get("projected_points")
+            actual = player.get("actual_points")
+            if after is None or actual is None:
+                continue
+            before = after / factor
+            improvement = abs(before - actual) - abs(after - actual)
+            reasons = adjustment.get("reasons") or ("Weekly context",)
+            for reason in reasons:
+                target = totals.setdefault(reason, {
+                    "samples": 0, "improvement_total": 0.0,
+                    "helpful": 0, "before_error_total": 0.0,
+                    "after_error_total": 0.0,
+                })
+                target["samples"] += 1
+                target["improvement_total"] += improvement
+                target["helpful"] += improvement > 0
+                target["before_error_total"] += abs(before - actual)
+                target["after_error_total"] += abs(after - actual)
+    return {
+        reason: {
+            "samples": values["samples"],
+            "average_error_improvement": values["improvement_total"] / values["samples"],
+            "helpful_rate": values["helpful"] / values["samples"],
+            "before_mae": values["before_error_total"] / values["samples"],
+            "after_mae": values["after_error_total"] / values["samples"],
+        }
+        for reason, values in totals.items()
+    }
+
+
 def calibration_record(
     run_id: str,
     slate,
@@ -213,6 +277,30 @@ def calibration_record(
         (total_winnings - entry_cost) / entry_cost
         if total_winnings is not None and entry_cost else None
     )
+    player_calibration = []
+    for row in evaluation_rows:
+        normalized_name = "".join(
+            character for character in row.name.casefold()
+            if character.isalnum()
+        )
+        player = players_by_name.get(normalized_name)
+        salary = player.salary if player is not None else None
+        player_calibration.append({
+            "player": row.name,
+            "position": row.position,
+            "salary": salary,
+            "projected_points": row.projected,
+            "actual_points": row.actual,
+            "projected_ownership": row.projected_ownership,
+            "actual_ownership": row.actual_ownership,
+            "value_per_thousand": (
+                row.projected / (salary / 1000)
+                if salary else None
+            ),
+            "bust_probability": row.bust_probability,
+            "confidence_score": row.confidence_score,
+            "confidence_tier": projection_confidence_tier(row),
+        })
     return {
         "run_id": run_id,
         "recorded_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -253,6 +341,9 @@ def calibration_record(
             "zero_point_players": metrics.zero_point_players,
             "zero_point_rate": metrics.zero_point_rate,
         },
+        # Preserve the observations needed to refit or validate the ownership
+        # proxy later. Aggregate-only records cannot support that work.
+        "player_calibration": player_calibration,
         "position_metrics": position_metrics,
         "salary_metrics": salary_metrics,
         "confidence_metrics": confidence_metrics,
@@ -275,6 +366,30 @@ def calibration_record(
 
 def calibration_record_bytes(record: dict) -> bytes:
     return (json.dumps(record, indent=2) + "\n").encode()
+
+
+def import_calibration_records(content: bytes) -> tuple[dict, ...]:
+    """Import one record or a portable list of calibration records."""
+    try:
+        payload = json.loads(content.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("calibration history must be valid JSON") from exc
+    records = payload if isinstance(payload, list) else [payload]
+    if not records or any(not isinstance(item, dict) for item in records):
+        raise ValueError("calibration history must contain one or more records")
+    required = {"run_id", "contest_format", "platform", "projection_metrics"}
+    for item in records:
+        missing = required - item.keys()
+        if missing:
+            raise ValueError(
+                "calibration record is missing fields: " + ", ".join(sorted(missing))
+            )
+    return tuple(records)
+
+
+def calibration_history_bytes(records: tuple[dict, ...]) -> bytes:
+    """Create a portable multi-slate ledger for Streamlit Cloud sessions."""
+    return (json.dumps(list(records), indent=2) + "\n").encode()
 
 
 def save_calibration_record(

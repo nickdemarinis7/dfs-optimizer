@@ -8,6 +8,7 @@ from pathlib import Path
 import streamlit as st
 
 from dfs_optimizer.data_sources.cfb import download_cfb_player_stats
+from dfs_optimizer.data_sources.cfb_depth_charts import fetch_cfb_depth_charts
 from dfs_optimizer.data_sources.cfb_odds import fetch_cfb_consensus_lines
 from dfs_optimizer.app_ui import (
     action_guide,
@@ -28,6 +29,7 @@ try:
         download_historical_data,
         historical_data_coverage,
         historical_data_paths,
+        nfl_historical_input_snapshot,
     )
 except ImportError:
     # Streamlit Cloud can keep an already-imported service module alive while
@@ -42,11 +44,21 @@ except ImportError:
     download_historical_data = _projection_services.download_historical_data
     historical_data_coverage = _projection_services.historical_data_coverage
     historical_data_paths = _projection_services.historical_data_paths
+    nfl_historical_input_snapshot = (
+        _projection_services.nfl_historical_input_snapshot
+    )
 from dfs_optimizer.services.player_context import (
     apply_final_status_overrides,
     fetch_player_context,
+    match_cfb_depth_chart_context,
 )
 from dfs_optimizer.services.role_adjustments import apply_current_role_adjustments
+from dfs_optimizer.services.weekly_context import (
+    apply_live_weather,
+    append_weekly_snapshot_history,
+    build_weekly_context,
+    weekly_context_snapshot,
+)
 from dfs_optimizer.services.cfb_projections import (
     CFB_FORECAST_MODEL_VERSION,
     apply_cfb_game_lines,
@@ -61,7 +73,7 @@ from dfs_optimizer.services.cfb_projections import (
 from dfs_optimizer.services.slates import infer_slate_period, load_uploaded_salary_file
 
 
-FORECAST_MODEL_VERSION = "injury-absence-padding-v9"
+FORECAST_MODEL_VERSION = "recent-role-recovery-v10"
 
 
 @st.cache_data(max_entries=8, show_spinner=False)
@@ -99,6 +111,19 @@ def _current_cfb_odds(api_key: str):
     return fetch_cfb_consensus_lines(api_key)
 
 
+CFB_DEPTH_CACHE_VERSION = "ourlads-reserves-v2"
+
+
+@st.cache_data(ttl=2 * 3600, max_entries=8, show_spinner=False)
+def _current_cfb_depth_charts(
+    team_names: tuple[tuple[str, str], ...], cache_version: str
+):
+    # The version is intentionally part of the cache key. Pickled dataclass
+    # instances from an older parser can otherwise survive a hot reload.
+    del cache_version
+    return fetch_cfb_depth_charts(team_names)
+
+
 def _odds_api_key() -> str:
     if value := os.environ.get("THE_ODDS_API_KEY"):
         return value
@@ -106,6 +131,28 @@ def _odds_api_key() -> str:
         return str(st.secrets.get("THE_ODDS_API_KEY", ""))
     except FileNotFoundError:
         return ""
+
+
+def _store_weekly_context(slate, season: int, week: int, cache_dir: str) -> None:
+    checked_at = datetime.now(timezone.utc)
+    context = apply_live_weather(
+        build_weekly_context(slate, season, week, cache_dir)
+    )
+    snapshot = weekly_context_snapshot(
+        context,
+        season=season,
+        week=week,
+        checked_at=checked_at,
+        slate=slate,
+        player_context=tuple(st.session_state.get("player_context", ())),
+    )
+    st.session_state["weekly_context"] = context
+    st.session_state["weekly_context_checked_at"] = checked_at
+    st.session_state["weekly_context_snapshot"] = snapshot
+    history_path = (
+        Path(cache_dir).expanduser() / "weekly_context" / f"{season}-week-{week}.jsonl"
+    )
+    append_weekly_snapshot_history(history_path, snapshot)
 
 
 page_kicker(1, "Set up", home=False)
@@ -168,11 +215,17 @@ if st.button("Change salary file", icon=":material/swap_horiz:"):
         "nfl_prop_credits_remaining",
         "projection_built_at", "historical_data_health", "player_context",
         "player_context_error", "player_context_built_at", "player_context_attempted",
+        "weekly_context", "weekly_context_checked_at", "weekly_context_snapshot",
+        "coach_signals",
+        "coach_signals_hash", "weekly_projection_adjustments",
+        "shadow_lineups", "shadow_projections",
+        "nfl_news_candidates", "nfl_news_checked_at", "nfl_news_snapshot",
         "lineups",
         "cfb_game_environments", "cfb_lines_hash", "cfb_lines_name", "cfb_target_week",
         "cfb_odds_warning",
         "cfb_lines_content", "projection_input_snapshot",
         "projection_input_snapshot_name", "cfb_player_context_hash",
+        "cfb_focused_context_hash", "cfb_player_context_key",
         "player_context_source",
         "final_status_context", "final_status_content", "final_status_name",
         "final_status_hash", "final_status_checked_at", "final_status_upload_version",
@@ -193,9 +246,6 @@ action_guide(
 )
 
 if slate.sport == Sport.CFB:
-    st.session_state["player_context"] = ()
-    st.session_state["player_context_error"] = None
-    st.session_state["player_context_attempted"] = False
     season = infer_cfb_season(slate) or date.today().year
     with st.container(border=True):
         section_intro(
@@ -220,6 +270,15 @@ if slate.sport == Sport.CFB:
             ),
             key=f"cfb-target-week-{hash(slate)}",
         ))
+        cfb_context_key = (hash(slate), season, target_week)
+        existing_context_key = st.session_state.get("cfb_player_context_key")
+        if existing_context_key is not None and existing_context_key != cfb_context_key:
+            st.session_state["player_context"] = ()
+            st.session_state["player_context_error"] = None
+            st.session_state["player_context_built_at"] = None
+            st.session_state["player_context_attempted"] = False
+            st.session_state["player_context_source"] = None
+            st.session_state["cfb_player_context_key"] = None
         refresh_cfb = st.toggle(
             "Force-download latest college data",
             help=(
@@ -286,18 +345,41 @@ if slate.sport == Sport.CFB:
                 projections = _cfb_forecast(
                     slate, season, target_week, "data/cache/cfb", CFB_FORECAST_MODEL_VERSION
                 )
+                stats_source = download_cfb_player_stats(
+                    season, "data/cache/cfb"
+                )
+                team_names = infer_cfb_team_names_from_file(
+                    slate, stats_source
+                )
+                status.write("Matching current college depth charts")
+                try:
+                    depth_entries = _current_cfb_depth_charts(
+                        tuple(sorted(team_names.items())), CFB_DEPTH_CACHE_VERSION
+                    )
+                    depth_context = match_cfb_depth_chart_context(
+                        slate, depth_entries
+                    )
+                    st.session_state["player_context"] = depth_context
+                    st.session_state["player_context_source"] = (
+                        "Ourlads college depth charts"
+                    )
+                    st.session_state["player_context_error"] = None
+                    st.session_state["player_context_built_at"] = datetime.now(
+                        timezone.utc
+                    )
+                    st.session_state["player_context_attempted"] = True
+                    st.session_state["cfb_player_context_key"] = cfb_context_key
+                except (OSError, ValueError):
+                    st.session_state["player_context"] = ()
+                    st.session_state["player_context_source"] = None
+                    st.session_state["player_context_attempted"] = True
+                    st.session_state["cfb_player_context_key"] = cfb_context_key
                 automatic_warning = None
                 lines_name = lines_upload.name if lines_upload else None
                 if not lines_content and odds_api_key:
                     status.write("Fetching current consensus spreads and totals")
                     try:
                         odds = _current_cfb_odds(odds_api_key)
-                        stats_source = download_cfb_player_stats(
-                            season, "data/cache/cfb"
-                        )
-                        team_names = infer_cfb_team_names_from_file(
-                            slate, stats_source
-                        )
                         generated_lines, matched_games = cfb_consensus_lines_csv(
                             slate, odds, team_names
                         )
@@ -339,9 +421,6 @@ if slate.sport == Sport.CFB:
             st.session_state["projection_key"] = projection_key
             st.session_state["projection_built_at"] = datetime.now(timezone.utc)
             st.session_state["cfb_target_week"] = target_week
-            stats_source = download_cfb_player_stats(
-                season, "data/cache/cfb"
-            )
             st.session_state["projection_input_snapshot"] = (
                 cfb_projection_input_snapshot(slate, stats_source, target_week)
             )
@@ -388,6 +467,32 @@ if slate.sport == Sport.CFB:
             fallback = estimate_cfb_ownership(
                 slate, build_platform_average_projections(slate)
             )
+            stats_source = download_cfb_player_stats(
+                season, "data/cache/cfb"
+            )
+            team_names = infer_cfb_team_names_from_file(
+                slate, stats_source
+            )
+            try:
+                depth_entries = _current_cfb_depth_charts(
+                    tuple(sorted(team_names.items())), CFB_DEPTH_CACHE_VERSION
+                )
+                depth_context = match_cfb_depth_chart_context(
+                    slate, depth_entries
+                )
+                st.session_state["player_context"] = depth_context
+                st.session_state["player_context_source"] = (
+                    "Ourlads college depth charts"
+                )
+                st.session_state["player_context_error"] = None
+                st.session_state["player_context_built_at"] = datetime.now(
+                    timezone.utc
+                )
+                st.session_state["player_context_attempted"] = True
+            except (OSError, ValueError):
+                st.session_state["player_context"] = ()
+                st.session_state["player_context_source"] = None
+                st.session_state["player_context_attempted"] = True
             environments = {}
             fallback_lines = lines_content
             fallback_lines_name = lines_upload.name if lines_upload else None
@@ -395,12 +500,6 @@ if slate.sport == Sport.CFB:
             if not fallback_lines and odds_api_key:
                 try:
                     odds = _current_cfb_odds(odds_api_key)
-                    stats_source = download_cfb_player_stats(
-                        season, "data/cache/cfb"
-                    )
-                    team_names = infer_cfb_team_names_from_file(
-                        slate, stats_source
-                    )
                     generated_lines, matched_games = cfb_consensus_lines_csv(
                         slate, odds, team_names
                     )
@@ -439,6 +538,8 @@ if slate.sport == Sport.CFB:
             st.session_state["cfb_lines_hash"] = lines_hash
             st.session_state["cfb_lines_name"] = fallback_lines_name
             st.session_state["cfb_odds_warning"] = automatic_warning
+            st.session_state.pop("projection_input_snapshot", None)
+            st.session_state.pop("projection_input_snapshot_name", None)
             st.switch_page("app_pages/build.py")
     st.stop()
 
@@ -483,6 +584,8 @@ if method == "Salary-file average":
     st.session_state["projections"] = projections
     st.session_state["role_adjustments"] = role_adjustments
     st.session_state["historical_data_health"] = {}
+    st.session_state.pop("projection_input_snapshot", None)
+    st.session_state.pop("projection_input_snapshot_name", None)
     st.caption("Salary-file averages are a fallback and are not forward-looking weekly projections.")
 else:
     inferred = infer_slate_period(slate, Path(cache_dir).expanduser() / "games.csv")
@@ -561,6 +664,8 @@ else:
                     base_projections,
                     tuple(st.session_state.get("player_context", ())),
                 )
+                status.write("Building weekly rest, travel, weather, and injury briefing")
+                _store_weekly_context(slate, season, week, cache_dir)
                 coverage = historical_data_coverage(
                     historical_data_paths(season, cache_dir), season
                 )
@@ -576,6 +681,12 @@ else:
             }
             st.session_state["projection_key"] = projection_key
             st.session_state["projection_built_at"] = datetime.now(timezone.utc)
+            st.session_state["projection_input_snapshot"] = (
+                nfl_historical_input_snapshot(season, cache_dir)
+            )
+            st.session_state["projection_input_snapshot_name"] = (
+                f"nfl-{season}-week-{week}-historical-inputs.zip"
+            )
             st.switch_page("app_pages/build.py")
         except (OSError, ValueError) as exc:
             st.error(f"Could not build projections: {exc}")

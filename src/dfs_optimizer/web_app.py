@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import sys
 
 import streamlit as st
 
@@ -15,10 +16,20 @@ st.set_page_config(
 # new dataclass definitions. Clear that incompatible state whenever the schema
 # changes instead of letting old Projection or PlayerContext instances reach
 # the new page code.
-APP_STATE_SCHEMA_VERSION = 3
+APP_STATE_SCHEMA_VERSION = 5
 if st.session_state.get("_app_state_schema_version") != APP_STATE_SCHEMA_VERSION:
     st.session_state.clear()
     st.session_state["_app_state_schema_version"] = APP_STATE_SCHEMA_VERSION
+    # Streamlit reruns the entrypoint without restarting Python, so sys.modules
+    # can still contain service modules from the previous deployment. Once the
+    # incompatible per-session objects are gone, evict our own cached modules
+    # so every page imports one coherent version of the application.
+    for module_name in tuple(sys.modules):
+        if (
+            module_name == "dfs_optimizer"
+            or module_name.startswith("dfs_optimizer.")
+        ) and module_name != __name__:
+            sys.modules.pop(module_name, None)
 
 from dfs_optimizer.app_ui import apply_app_style
 
@@ -45,6 +56,17 @@ for key, default in (
     ("player_context_error", None),
     ("player_context_built_at", None),
     ("player_context_attempted", False),
+    ("weekly_context", ()),
+    ("weekly_context_checked_at", None),
+    ("weekly_context_snapshot", None),
+    ("coach_signals", ()),
+    ("coach_signals_hash", None),
+    ("weekly_projection_adjustments", ()),
+    ("shadow_lineups", ()),
+    ("shadow_projections", ()),
+    ("nfl_news_candidates", ()),
+    ("nfl_news_checked_at", None),
+    ("nfl_news_snapshot", None),
     ("final_status_context", ()),
     ("final_status_content", None),
     ("final_status_name", None),

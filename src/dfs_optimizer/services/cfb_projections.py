@@ -26,7 +26,7 @@ from dfs_optimizer.rules import cfb_scoring_for, classic_rules_for
 from .player_context import PlayerContext
 
 
-CFB_FORECAST_MODEL_VERSION = "cfb-recent-usage-v8"
+CFB_FORECAST_MODEL_VERSION = "cfb-recent-usage-v9"
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +51,29 @@ class _GameStats:
     receiving_yards: float = 0
     receiving_touchdowns: float = 0
     targets: float = 0
+
+
+def historically_verified_cfb_player_ids(
+    projections: tuple[Projection, ...],
+) -> frozenset[str]:
+    """Return players supported by recent, repeated current-season usage.
+
+    CFB does not have a complete public live depth-chart feed. Requiring a
+    separate context row for every established player therefore turns missing
+    provider coverage into needless manual work. Two or more observed team
+    games with participation no older than the previous game is enough to
+    clear the availability gate; one-game and stale-role players still need a
+    current source or explicit acknowledgement.
+    """
+    return frozenset(
+        item.platform_id
+        for item in projections
+        if item.platform_id
+        and item.projected_points > 0
+        and (item.sample_size or 0) >= 2
+        and item.data_age_periods is not None
+        and item.data_age_periods <= 1
+    )
 
 
 def infer_cfb_season(slate: Slate) -> int | None:
@@ -140,11 +163,22 @@ def cfb_consensus_lines_csv(
 
     def abbreviation(provider_name: str) -> str | None:
         normalized = _normalize_team(provider_name)
+        matching_schools = [
+            school
+            for school in abbreviation_by_school
+            if normalized.startswith(school) or school.startswith(normalized)
+        ]
+        if not matching_schools:
+            return None
+        # Provider names normally append a mascot to the school name. Prefer
+        # the most-specific school match so "Michigan State Spartans" maps to
+        # Michigan State rather than becoming ambiguous with Michigan.
+        longest_match = max(len(school) for school in matching_schools)
         candidates = {
             value
-            for school, values in abbreviation_by_school.items()
-            if normalized.startswith(school) or school.startswith(normalized)
-            for value in values
+            for school in matching_schools
+            if len(school) == longest_match
+            for value in abbreviation_by_school[school]
         }
         return next(iter(candidates)) if len(candidates) == 1 else None
 
@@ -330,6 +364,7 @@ def build_cfb_projections_from_file(
         observed_weeks = {week for week, _, _ in observed}
 
         expected_team = team_names.get(player.team)
+        missed_latest_team_week = False
         if expected_team:
             observed_by_week = {
                 week: (points, opportunity)
@@ -339,14 +374,25 @@ def build_cfb_projections_from_file(
                 week for week in team_weeks.get(expected_team, ())
                 if week >= observed[0][0]
             )
-            observed = [
-                (
-                    week,
-                    observed_by_week.get(week, (0.0, 0.0))[0],
-                    observed_by_week.get(week, (0.0, 0.0))[1],
-                )
-                for week in active_team_weeks
-            ]
+            missed_latest_team_week = bool(
+                active_team_weeks
+                and active_team_weeks[-1] not in observed_weeks
+            )
+            # A zero-touch team game is meaningful workload evidence for a
+            # skill player. For a quarterback it commonly represents an
+            # injury absence, not a zero-point active performance. Preserve
+            # observed QB games and let the current depth chart determine
+            # whether he is the starter; the backup check below still removes
+            # a QB who missed the latest game while a teammate played.
+            if player.primary_position != Position.QB:
+                observed = [
+                    (
+                        week,
+                        observed_by_week.get(week, (0.0, 0.0))[0],
+                        observed_by_week.get(week, (0.0, 0.0))[1],
+                    )
+                    for week in active_team_weeks
+                ]
 
         # If another slate QB recorded an event in the team's latest game,
         # a QB with zero latest-game opportunity is a backup or injury-return
@@ -354,13 +400,13 @@ def build_cfb_projections_from_file(
         if (
             player.primary_position == Position.QB
             and observed
-            and observed[-1][0] not in observed_weeks
+            and missed_latest_team_week
             and any(
                 teammate.platform_id != player.platform_id
                 and teammate.team == player.team
                 and teammate.primary_position == Position.QB
                 and any(
-                    week == observed[-1][0]
+                    week == max(team_weeks.get(expected_team, {observed[-1][0]}))
                     for week, _, _ in game_points.get(
                         teammate.platform_id, ()
                     )
@@ -400,6 +446,13 @@ def build_cfb_projections_from_file(
             if allowed and position_mean > 0:
                 projected *= min(1.15, max(.85, statistics.fmean(allowed) / position_mean))
             projected = max(0.0, projected)
+            # The forecast median must remain below the player's demonstrated
+            # upper-tail outcome. Otherwise an outlier recent average can
+            # masquerade as a safe median and leave the optimizer with no
+            # meaningful distinction between median and ceiling.
+            historical_p90 = max(0.0, _percentile(values, .90))
+            if historical_p90 > 0:
+                projected = min(projected, historical_p90 * .95)
             p10 = min(projected, max(0.0, _percentile(values, .10)))
             p25 = min(projected, max(p10, _percentile(values, .25)))
             p75 = max(projected, _percentile(values, .75))

@@ -175,6 +175,7 @@ def regenerate_current_portfolio(slate, projections, settings: dict):
     optimization_settings = SingleGameOptimizationSettings(
         multiplier_positions=frozenset({Position.QB, Position.RB, Position.WR, Position.TE}),
         minimum_multiplier_ceiling=18,
+        maximum_multiplier_bust_probability=.45,
         minimum_quarterbacks=1,
         minimum_quarterback_projection=5,
         minimum_player_projection=.1,

@@ -16,11 +16,19 @@ from dfs_optimizer.app_ui import (
     section_intro,
 )
 from dfs_optimizer.exporters import lineups_csv_text, merge_lineups_into_template
-from dfs_optimizer.models import ContestFormat, Position, Sport
+from dfs_optimizer.models import ContestFormat, Platform, Position, Sport
 from dfs_optimizer.services.portfolio import analyze_portfolio
 from dfs_optimizer.services.preflight import preflight_lineups
 from dfs_optimizer.services.run_archive import build_run_archive
-from dfs_optimizer.services.scenarios import simulate_lineups
+from dfs_optimizer.services import scenarios as _scenarios
+
+if "script_type" not in getattr(
+    _scenarios.LineupScenarioAnalysis, "__dataclass_fields__", {}
+):
+    from importlib import reload
+
+    _scenarios = reload(_scenarios)
+simulate_lineups = _scenarios.simulate_lineups
 from dfs_optimizer.services.submissions import (
     compare_submitted_rosters,
     import_submitted_rosters,
@@ -78,6 +86,17 @@ def _lineup_story(lineup, contest_format: ContestFormat) -> str:
     team_counts = Counter(entry.player.team for entry in lineup.entries)
     split = "–".join(str(count) for _, count in team_counts.most_common())
     return f"{multiplier.slot}: {multiplier.player.name} · {split} team split"
+
+
+def _display_slot(slot: str, platform: Platform, sport: Sport) -> str:
+    """Use a truthful UI label without changing contest-site export headers."""
+    if (
+        platform == Platform.FANDUEL
+        and sport == Sport.CFB
+        and slot.startswith("WR")
+    ):
+        return slot.replace("WR", "WR/TE", 1)
+    return slot
 
 
 slate = st.session_state.get("slate")
@@ -217,8 +236,9 @@ with st.container(border=True):
         ),
     )
     st.dataframe(pd.DataFrame([{
-        "Slot": entry.slot,
+        "Slot": _display_slot(entry.slot, slate.platform, slate.sport),
         "Player": entry.player.name,
+        "Position": entry.player.primary_position.value,
         "Team": entry.player.team,
         "Projection": entry.projection.projected_points
         * getattr(entry, "point_multiplier", 1),
@@ -298,6 +318,33 @@ with st.container(border=True):
             "This run is available in Run history for the current browser session. "
             "Download the complete run package for durable storage."
         )
+
+candidate_diagnostics = st.session_state.get("lineup_settings", {}).get(
+    "classic_candidate_diagnostics"
+)
+if candidate_diagnostics:
+    with st.expander("Candidate coverage", icon=":material/troubleshoot:"):
+        st.caption(
+            "This checks whether the optimizer considered enough distinct cores "
+            "before selecting the final three lineups."
+        )
+        diagnostic_columns = st.columns(3)
+        diagnostic_columns[0].metric(
+            "Candidates", candidate_diagnostics.get("candidate_count", 0)
+        )
+        diagnostic_columns[1].metric(
+            "Player coverage",
+            f"{candidate_diagnostics.get('player_coverage', 0):.0%}",
+        )
+        diagnostic_columns[2].metric(
+            "QBs considered", candidate_diagnostics.get("quarterbacks_considered", 0)
+        )
+        absences = candidate_diagnostics.get("high_ceiling_absences", ())
+        if absences:
+            st.caption(
+                "Highest-ceiling players absent from every candidate: "
+                + ", ".join(item["player"] for item in absences)
+            )
 
 optional_label("Optional portfolio analysis")
 exposure_tab, simulation_tab = st.tabs([

@@ -100,9 +100,15 @@ def _forecast_players(
             and player.platform_average <= 2
             and sum(_opportunities(player.primary_position, row) for row in current_games)
             / len(current_games) < 2
+            and sum(
+                _opportunities(player.primary_position, row)
+                for row in current_games[:2]
+            ) / min(2, len(current_games)) < 2
         ):
             # Do not let a previous starter role create a current-week projection
-            # when both recent usage and the platform's slate average indicate a backup.
+            # when both recent usage and the platform's slate average indicate a
+            # backup. Preserve players whose latest two games show a real role
+            # increase even if older low-volume games depress the five-game mean.
             continue
         games = sorted(
             by_game.values(),

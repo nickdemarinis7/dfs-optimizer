@@ -77,6 +77,47 @@ class HistoricalRangeTests(unittest.TestCase):
 
             self.assertLess(result.ceiling, 8)
 
+    def test_kicker_ranges_use_realized_kicking_points(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            players = root / "players.csv"
+            teams = root / "teams.csv"
+            games = root / "games.csv"
+            players.write_text(
+                "season,week,season_type,player_display_name,fg_att,pat_att,"
+                "fg_made_0_19,fg_made_20_29,fg_made_30_39,fg_made_40_49,"
+                "fg_made_50_59,fg_made_60_,pat_made\n"
+                "2026,1,REG,Test Kicker,1,2,0,0,1,0,0,0,2\n"
+                "2026,2,REG,Test Kicker,2,3,0,0,1,1,0,0,3\n"
+                "2026,3,REG,Test Kicker,3,2,0,0,1,1,1,0,2\n",
+                encoding="utf-8",
+            )
+            teams.write_text(
+                "season,week,season_type,game_id,team\n", encoding="utf-8"
+            )
+            games.write_text(
+                "game_id,home_team,away_team,home_score,away_score\n",
+                encoding="utf-8",
+            )
+            player = Player(
+                "k", "Test Kicker", Position.K, (Position.K,),
+                5000, "AAA", "BBB", "AAA@BBB",
+            )
+            slate = Slate(
+                Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME,
+                (player,), "test.csv",
+            )
+
+            result = add_historical_ranges(
+                slate,
+                (Projection(player.name, player.team, 8, platform_id="k"),),
+                (players,), (teams,), games, 2026, 4,
+            )[0]
+
+            self.assertEqual(result.sample_size, 3)
+            self.assertGreater(result.ceiling, result.projected_points)
+            self.assertLess(result.bust_probability, 1)
+
     def test_preserves_recent_opportunity_decline_as_projection_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -118,6 +159,53 @@ class HistoricalRangeTests(unittest.TestCase):
             self.assertEqual(result.sample_size, 4)
             self.assertLess(result.opportunity_stability, .30)
             self.assertEqual(result.data_age_periods, 0)
+
+    def test_marks_first_game_back_after_multi_game_absence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            players = root / "players.csv"
+            teams = root / "teams.csv"
+            games = root / "games.csv"
+            snaps = root / "snaps.csv"
+            players.write_text(
+                "season,week,season_type,player_display_name,position,targets,receptions,receiving_yards\n"
+                "2026,1,REG,Returning WR,WR,8,5,70\n"
+                "2026,6,REG,Returning WR,WR,10,3,27\n",
+                encoding="utf-8",
+            )
+            teams.write_text(
+                "season,week,season_type,game_id,team\n"
+                + "".join(
+                    f"2026,{week},REG,g{week},NE\n" for week in range(1, 7)
+                ),
+                encoding="utf-8",
+            )
+            games.write_text(
+                "game_id,home_team,away_team,home_score,away_score\n",
+                encoding="utf-8",
+            )
+            snaps.write_text(
+                "season,week,game_type,player,team,offense_pct\n"
+                "2026,1,REG,Returning WR,NE,.80\n"
+                "2026,6,REG,Returning WR,NE,.76\n",
+                encoding="utf-8",
+            )
+            player = Player(
+                "wr", "Returning WR", Position.WR,
+                (Position.WR, Position.FLEX), 7000, "NE", "CHI", "NE@CHI",
+            )
+            slate = Slate(
+                Platform.DRAFTKINGS, ContestFormat.SINGLE_GAME,
+                (player,), "test.csv",
+            )
+
+            result = add_historical_ranges(
+                slate,
+                (Projection(player.name, player.team, 14, platform_id="wr"),),
+                (players,), (teams,), games, 2026, 7, snap_files=(snaps,),
+            )[0]
+
+            self.assertEqual(result.recent_return_games, 1)
 
 
 if __name__ == "__main__":
