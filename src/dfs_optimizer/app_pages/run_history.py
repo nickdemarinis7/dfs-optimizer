@@ -4,7 +4,9 @@ import pandas as pd
 import streamlit as st
 
 from dfs_optimizer.app_state import restore_run_session
-from dfs_optimizer.app_ui import action_guide, apply_platform_theme, hero, page_kicker
+from dfs_optimizer.app_ui import (
+    action_guide, apply_platform_theme, compact_file_uploader, hero, page_kicker,
+)
 from dfs_optimizer.services.run_history import (
     compare_runs,
     import_run_archive,
@@ -39,7 +41,8 @@ with st.container(border=True):
         "are verified before anything is restored."
     )
     with st.form("import-run-package", border=False):
-        uploaded_run = st.file_uploader(
+        uploaded_run = compact_file_uploader(
+            "Choose a run package",
             "Complete run package",
             type="zip",
             key="history-run-upload",

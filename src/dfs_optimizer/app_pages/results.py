@@ -10,6 +10,7 @@ import streamlit as st
 from dfs_optimizer.app_ui import (
     action_guide,
     apply_platform_theme,
+    compact_file_uploader,
     hero,
     optional_label,
     page_kicker,
@@ -287,7 +288,13 @@ with st.container(border=True):
         type="primary",
         width="stretch",
     )
-    template = st.file_uploader("Official contest-entry template (optional)", type="csv")
+    template = compact_file_uploader(
+        "Use an official entry template",
+        "Official contest-entry template",
+        type="csv",
+        key="official-entry-template",
+        help="Optional. Add the contest site's entry-edit CSV to receive a ready-to-upload file.",
+    )
     if template:
         try:
             completed = merge_lineups_into_template(lineups, slate.platform, template.getvalue())
@@ -417,10 +424,12 @@ with st.container(border=True):
         "After uploading entries to the platform, add that completed CSV here. "
         "This becomes the pre-lock source of truth and is compared with this generated run."
     )
-    submitted_file = st.file_uploader(
+    submitted_file = compact_file_uploader(
+        "Save the entries I submitted",
         "Completed platform entry CSV",
         type="csv",
         key="final-submission-file",
+        help="Optional. Add the completed platform CSV if your final entries changed after generation.",
     )
     if submitted_file is not None:
         try:

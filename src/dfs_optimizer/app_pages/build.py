@@ -13,6 +13,7 @@ import streamlit as st
 from dfs_optimizer.app_ui import (
     action_guide,
     apply_platform_theme,
+    compact_file_uploader,
     hero,
     optional_label,
     page_kicker,
@@ -487,12 +488,14 @@ if slate.sport == Sport.NFL:
             icon=":material/download:",
             width="stretch",
         )
-        coach_upload = coach_actions[1].file_uploader(
-            "Upload coach reports",
-            type=("csv",),
-            key=f"coach-signals-{hash(slate)}",
-            label_visibility="collapsed",
-        )
+        with coach_actions[1]:
+            coach_upload = compact_file_uploader(
+                "Add coach reports",
+                "Upload coach reports",
+                type=("csv",),
+                key=f"coach-signals-{hash(slate)}",
+                help="Optional. Upload attributed coach comments using the template.",
+            )
         if coach_upload is not None:
             try:
                 coach_content = coach_upload.getvalue()
@@ -626,15 +629,17 @@ if slate.sport == Sport.NFL:
         icon=":material/download:",
         width="stretch",
     )
-    final_status_upload = final_status_actions[1].file_uploader(
-        "Upload completed status file",
-        type=("csv",),
-        key=(
-            f"final-status-upload-{hash(slate)}-"
-            f"{st.session_state.get('final_status_upload_version', 0)}"
-        ),
-        label_visibility="collapsed",
-    )
+    with final_status_actions[1]:
+        final_status_upload = compact_file_uploader(
+            "Add final statuses",
+            "Upload completed status file",
+            type=("csv",),
+            key=(
+                f"final-status-upload-{hash(slate)}-"
+                f"{st.session_state.get('final_status_upload_version', 0)}"
+            ),
+            help="Optional. Upload confirmed ACTIVE, INACTIVE, or OUT statuses using the template.",
+        )
     if final_status_upload is not None:
         final_status_content = final_status_upload.getvalue()
         final_status_hash = hashlib.sha256(final_status_content).hexdigest()
@@ -842,8 +847,9 @@ else:
             icon=":material/download:",
             width="stretch",
         )
-        context_file = st.file_uploader(
-            "Current availability / depth-chart CSV (recommended)",
+        context_file = compact_file_uploader(
+            "Add availability or depth chart",
+            "Current availability / depth-chart CSV",
             type="csv",
             key=f"cfb-player-context-{hash(slate)}",
             help=(
@@ -1062,8 +1068,9 @@ if customize_strategy:
             help="Automatically selected low-floor values can appear in only one lineup.",
         )
         if slate.sport == Sport.NFL:
-            consensus = st.file_uploader(
-                "External projections CSV (optional)",
+            consensus = compact_file_uploader(
+                "Add external projections",
+                "External projections CSV",
                 type="csv",
                 key=f"external-projections-{hash(slate)}",
                 help=(
@@ -1124,9 +1131,11 @@ if customize_strategy:
                     # restored internal baseline on the next render.
                     st.session_state.pop("ownership_hash", None)
                     st.rerun()
-        ownership = st.file_uploader(
-            "Projected ownership CSV (optional)",
+        ownership = compact_file_uploader(
+            "Add projected ownership",
+            "Projected ownership CSV",
             type="csv",
+            key=f"ownership-upload-{hash(slate)}",
             help=(
                 "The free in-house estimate is used automatically. If you have a CSV, "
                 "common columns such as Player, Team, Own%, pOWN%, and Projected "
@@ -1403,7 +1412,8 @@ if slate.sport == Sport.CFB:
                     "It contains only players selected by the provisional portfolio."
                 ),
             )
-            focused_context_file = st.file_uploader(
+            focused_context_file = compact_file_uploader(
+                "Add completed player checks",
                 "Upload completed uncertain-player checks",
                 type="csv",
                 key=f"cfb-focused-context-{hash(slate)}",

@@ -13,6 +13,7 @@ from dfs_optimizer.data_sources.cfb_odds import fetch_cfb_consensus_lines
 from dfs_optimizer.app_ui import (
     action_guide,
     apply_platform_theme,
+    compact_file_uploader,
     feature_strip,
     hero,
     journey_strip,
@@ -309,7 +310,8 @@ if slate.sport == Sport.CFB:
                 "Add THE_ODDS_API_KEY to Streamlit secrets to fetch current "
                 "consensus lines automatically."
             )
-        lines_upload = st.file_uploader(
+        lines_upload = compact_file_uploader(
+            "Override betting lines",
             "Game-lines CSV",
             type="csv",
             key=f"cfb-lines-upload-{hash(slate)}",

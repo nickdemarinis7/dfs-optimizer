@@ -5,6 +5,34 @@ from html import escape
 import streamlit as st
 
 
+def compact_file_uploader(
+    action_label: str,
+    uploader_label: str,
+    *,
+    type,
+    key: str,
+    help: str | None = None,
+    accept_multiple_files: bool = False,
+    width: str = "stretch",
+):
+    """Keep secondary file inputs out of the default page layout."""
+    existing = st.session_state.get(key)
+    with st.popover(
+        "File added" if existing else action_label,
+        icon=":material/check_circle:" if existing else ":material/upload_file:",
+        help=help,
+        width=width,
+    ):
+        if help:
+            st.caption(help)
+        return st.file_uploader(
+            uploader_label,
+            type=type,
+            key=key,
+            accept_multiple_files=accept_multiple_files,
+        )
+
+
 def apply_app_style() -> None:
     """Apply a small, stable layer of product styling over the native theme."""
     st.html(

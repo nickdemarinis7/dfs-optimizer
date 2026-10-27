@@ -7,7 +7,9 @@ import pandas as pd
 import streamlit as st
 
 from dfs_optimizer.app_state import restore_run_session
-from dfs_optimizer.app_ui import action_guide, apply_platform_theme, hero, page_kicker
+from dfs_optimizer.app_ui import (
+    action_guide, apply_platform_theme, compact_file_uploader, hero, page_kicker,
+)
 from dfs_optimizer.models import ContestFormat
 from dfs_optimizer.backtesting import (
     evaluate_projection_rows,
@@ -84,16 +86,19 @@ if slate is None or not lineups:
             "rosters differed from the generated portfolio."
         )
         with st.form("backtest-run-import", border=False):
-            run_upload = st.file_uploader(
+            run_upload = compact_file_uploader(
+                "Choose a run package",
                 "Complete run package",
                 type="zip",
                 key="backtest-run-package",
                 help="Upload the dfs-run ZIP—not the contest standings ZIP.",
             )
-            submission_upload = st.file_uploader(
-                "Final-submission snapshot (optional)",
+            submission_upload = compact_file_uploader(
+                "Add submission snapshot",
+                "Final-submission snapshot",
                 type="json",
                 key="backtest-submission-snapshot",
+                help="Optional. Use this only when the entered rosters differed from the generated portfolio.",
             )
             restore_clicked = st.form_submit_button(
                 "Restore run for grading",
@@ -146,9 +151,11 @@ st.caption(
     f"{slate.platform.value.title()} · {slate.contest_format.value.replace('_', ' ').title()} · "
     f"{len(lineups)} generated lineups"
 )
-results_file = st.file_uploader(
+results_file = compact_file_uploader(
+    "Upload final standings",
     "Contest standings",
     type=("csv", "zip"),
+    key="backtest-contest-standings",
     help="Use the final contest standings export from DraftKings or FanDuel.",
 )
 entry_filter = st.text_input(
@@ -840,9 +847,11 @@ if results_file is not None:
             )
 
 saved_records = list_calibration_records()
-history_files = st.file_uploader(
-    "Previous calibration records (optional)",
+history_files = compact_file_uploader(
+    "Add previous calibration records",
+    "Previous calibration records",
     type="json",
+    key="backtest-calibration-history",
     accept_multiple_files=True,
     help=(
         "Upload records downloaded after earlier slates. This keeps the multi-slate "
